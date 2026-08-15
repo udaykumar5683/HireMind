@@ -23,7 +23,7 @@ import {
   X,
   ArrowUpRight,
 } from "lucide-react";
-import { useState, useEffect, useRef } from "react";
+import { type ReactNode, useState, useEffect, useRef } from "react";
 import { motion, useScroll, useTransform, useInView, AnimatePresence, useReducedMotion } from "framer-motion";
 import WorkflowChart from "@/components/WorkflowChart";
 import LoginDropdown from "@/components/LoginDropdown";
@@ -87,8 +87,14 @@ const testimonials = [
   },
 ];
 
-const AnimatedCounter = ({ to, duration = 2000, suffix = "" }) => {
-  const ref = useRef(null);
+type AnimatedCounterProps = {
+  to: number;
+  duration?: number;
+  suffix?: string;
+};
+
+const AnimatedCounter = ({ to, duration = 2000, suffix = "" }: AnimatedCounterProps) => {
+  const ref = useRef<HTMLSpanElement>(null);
   const isInView = useInView(ref, { once: true, margin: "-100px" });
   const [count, setCount] = useState(to);
   const shouldReduceMotion = useReducedMotion();
@@ -98,11 +104,11 @@ const AnimatedCounter = ({ to, duration = 2000, suffix = "" }) => {
       setCount(to);
       return;
     }
-    let startTime;
-    let animationFrame;
+    let startTime: number | undefined;
+    let animationFrame: number | undefined;
     setCount(0);
 
-    const animate = (timestamp) => {
+    const animate = (timestamp: number) => {
       if (!startTime) startTime = timestamp;
       const progress = Math.min((timestamp - startTime) / duration, 1);
       const currentCount = Math.floor(progress * to);
@@ -114,7 +120,9 @@ const AnimatedCounter = ({ to, duration = 2000, suffix = "" }) => {
 
     animationFrame = requestAnimationFrame(animate);
 
-    return () => cancelAnimationFrame(animationFrame);
+    return () => {
+      if (animationFrame !== undefined) cancelAnimationFrame(animationFrame);
+    };
   }, [isInView, to, duration, shouldReduceMotion]);
 
   return (
@@ -125,14 +133,22 @@ const AnimatedCounter = ({ to, duration = 2000, suffix = "" }) => {
   );
 };
 
-const Section = ({ children, className = "", delay = 0 }) => {
-  const ref = useRef(null);
+type SectionProps = {
+  children: ReactNode;
+  id?: string;
+  className?: string;
+  delay?: number;
+};
+
+const Section = ({ children, id, className = "", delay = 0 }: SectionProps) => {
+  const ref = useRef<HTMLElement>(null);
   const isInView = useInView(ref, { once: true, margin: "-100px" });
   const shouldReduceMotion = useReducedMotion();
 
   return (
     <motion.section
       ref={ref}
+      id={id}
       initial={shouldReduceMotion ? false : { opacity: 0, y: 50 }}
       animate={shouldReduceMotion ? false : (isInView ? { opacity: 1, y: 0 } : { opacity: 0, y: 50 })}
       transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.8, delay, ease: "easeOut" }}

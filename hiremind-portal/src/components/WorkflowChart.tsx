@@ -70,8 +70,23 @@ const recruiterSteps = [
   { id: 15, title: "Interview Shortlist & Hiring Decision", icon: ClipboardList, color: "bg-red-100 text-red-700", desc: "Interview shortlisted candidates and make hiring decisions" }
 ];
 
+type WorkflowStep = {
+  id: number | string;
+  title: string;
+  icon: React.ElementType;
+  color: string;
+  desc: string;
+};
+
+type StepCardProps = {
+  step: WorkflowStep;
+  index: number;
+  delay: number;
+  type: string;
+};
+
 // Helper component for animated step cards
-const StepCard = ({ step, index, delay, type }) => {
+const StepCard = ({ step, index, delay, type }: StepCardProps) => {
   const shouldReduceMotion = useReducedMotion();
   const ref = React.useRef(null);
   const isInView = useInView(ref, { once: true, margin: "-50px 0px" });

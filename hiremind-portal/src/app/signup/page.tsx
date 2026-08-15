@@ -108,8 +108,6 @@ export default function SignUp() {
     },
   });
 
-  const form = role === "Candidate" ? candidateForm : recruiterForm;
-
   const handleSubmit = async (data: CandidateFormData | RecruiterFormData) => {
     setIsLoading(true);
     setError(null);
@@ -201,7 +199,14 @@ export default function SignUp() {
               </div>
             )}
 
-            <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
+            <form
+              onSubmit={
+                role === "Candidate"
+                  ? candidateForm.handleSubmit(handleSubmit)
+                  : recruiterForm.handleSubmit(handleSubmit)
+              }
+              className="space-y-4"
+            >
               {role === "Candidate" ? (
                 <>
                   <div className="space-y-2">
@@ -294,12 +299,19 @@ export default function SignUp() {
                     type="tel"
                     placeholder="+1 234 567 890"
                     className="pl-10"
-                    {...form.register("phone")}
+                    {...(role === "Candidate"
+                      ? candidateForm.register("phone")
+                      : recruiterForm.register("phone"))}
                   />
                 </div>
-                {form.formState.errors.phone && (
+                {role === "Candidate" && candidateForm.formState.errors.phone && (
                   <p className="text-xs text-destructive">
-                    {form.formState.errors.phone.message}
+                    {candidateForm.formState.errors.phone.message}
+                  </p>
+                )}
+                {role === "Recruiter" && recruiterForm.formState.errors.phone && (
+                  <p className="text-xs text-destructive">
+                    {recruiterForm.formState.errors.phone.message}
                   </p>
                 )}
               </div>
@@ -313,12 +325,19 @@ export default function SignUp() {
                     type="password"
                     placeholder="••••••••"
                     className="pl-10"
-                    {...form.register("password")}
+                    {...(role === "Candidate"
+                      ? candidateForm.register("password")
+                      : recruiterForm.register("password"))}
                   />
                 </div>
-                {form.formState.errors.password && (
+                {role === "Candidate" && candidateForm.formState.errors.password && (
                   <p className="text-xs text-destructive">
-                    {form.formState.errors.password.message}
+                    {candidateForm.formState.errors.password.message}
+                  </p>
+                )}
+                {role === "Recruiter" && recruiterForm.formState.errors.password && (
+                  <p className="text-xs text-destructive">
+                    {recruiterForm.formState.errors.password.message}
                   </p>
                 )}
               </div>
@@ -332,12 +351,19 @@ export default function SignUp() {
                     type="password"
                     placeholder="••••••••"
                     className="pl-10"
-                    {...form.register("confirmPassword")}
+                    {...(role === "Candidate"
+                      ? candidateForm.register("confirmPassword")
+                      : recruiterForm.register("confirmPassword"))}
                   />
                 </div>
-                {form.formState.errors.confirmPassword && (
+                {role === "Candidate" && candidateForm.formState.errors.confirmPassword && (
                   <p className="text-xs text-destructive">
-                    {form.formState.errors.confirmPassword.message}
+                    {candidateForm.formState.errors.confirmPassword.message}
+                  </p>
+                )}
+                {role === "Recruiter" && recruiterForm.formState.errors.confirmPassword && (
+                  <p className="text-xs text-destructive">
+                    {recruiterForm.formState.errors.confirmPassword.message}
                   </p>
                 )}
               </div>

@@ -80,8 +80,6 @@ export default function Login() {
     },
   });
 
-  const form = role === "Candidate" ? candidateForm : recruiterForm;
-
   const handleSubmit = async (data: CandidateLoginFormData | RecruiterLoginFormData) => {
     setIsLoading(true);
     setError(null);
@@ -163,7 +161,14 @@ export default function Login() {
               </div>
             )}
 
-            <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
+            <form
+              onSubmit={
+                role === "Candidate"
+                  ? candidateForm.handleSubmit(handleSubmit)
+                  : recruiterForm.handleSubmit(handleSubmit)
+              }
+              className="space-y-4"
+            >
               <div className="space-y-2">
                 <Label htmlFor="email">
                   {role === "Candidate" ? "Email" : "Company Email"}
@@ -209,12 +214,19 @@ export default function Login() {
                     type="password"
                     placeholder="••••••••"
                     className="pl-10"
-                    {...form.register("password")}
+                    {...(role === "Candidate"
+                      ? candidateForm.register("password")
+                      : recruiterForm.register("password"))}
                   />
                 </div>
-                {form.formState.errors.password && (
+                {role === "Candidate" && candidateForm.formState.errors.password && (
                   <p className="text-xs text-destructive">
-                    {form.formState.errors.password.message}
+                    {candidateForm.formState.errors.password.message}
+                  </p>
+                )}
+                {role === "Recruiter" && recruiterForm.formState.errors.password && (
+                  <p className="text-xs text-destructive">
+                    {recruiterForm.formState.errors.password.message}
                   </p>
                 )}
               </div>
@@ -224,7 +236,9 @@ export default function Login() {
                   type="checkbox"
                   id="remember"
                   className="w-4 h-4 rounded border-input"
-                  {...form.register("remember")}
+                  {...(role === "Candidate"
+                    ? candidateForm.register("remember")
+                    : recruiterForm.register("remember"))}
                 />
                 <Label htmlFor="remember" className="text-sm text-muted-foreground">
                   Remember me
