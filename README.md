@@ -42,6 +42,7 @@ Evidence-Based Candidate Evaluation
 ```
 
 ---
+<img width="672" height="687" alt="image" src="https://github.com/user-attachments/assets/9c7051dd-45dd-4681-8353-77925c09f326" />
 
 # 🎯 Core Objectives
 
