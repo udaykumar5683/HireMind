@@ -1,4 +1,6 @@
 # 🧠 HireMind — AI Assessment & Proctoring
+<img width="1536" height="1024" alt="ai agent" src="https://github.com/user-attachments/assets/dbf7c6d3-0a80-43b9-94a9-b86c5fd15f13" />
+
 
 > **An AI-powered assessment and proctoring system for evidence-based candidate evaluation.**
 
