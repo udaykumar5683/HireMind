@@ -58,7 +58,7 @@ const initialData = {
     name: "Uday_Kumar_Resume.pdf",
     uploadDate: "June 15, 2026"
   },
-  avatarUrl: null
+  avatarUrl: null as string | null
 };
 
 export default function CandidateProfile() {
