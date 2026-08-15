@@ -1,0 +1,57 @@
+# Environment & secrets (CRITICAL - DO NOT COMMIT KEYS)
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+
+# Node
+node_modules
+dist
+dist-ssr
+build
+*.local
+
+# Next.js
+.next/
+out/
+next-env.d.ts
+
+# Playwright / browsers
+ms-playwright/
+.cache/
+
+# Candidate pipeline data & generated profiles
+Database/**/*.json
+Student_Profile_Database/
+Profile_generator/Profile_Database/
+
+# Testing
+coverage/
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

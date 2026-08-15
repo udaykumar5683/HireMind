@@ -1,0 +1,101 @@
+@import "tailwindcss";
+
+:root {
+  /* New Light Theme Colors */
+  --hm-bg-cream: #F5F2EC;
+  --hm-card-white: #ffffff;
+  --hm-card-border: #E7E1D6;
+  
+  --hm-text-near-black: #211D17;
+  --hm-text-muted: #5D5348; /* Darker for better contrast */
+  --hm-text-faint: #7A6F61; /* Darker to meet 4.5:1 contrast ratio */
+  
+  --hm-indigo: #3B3082;
+  --hm-indigo-soft: #EDEBFB;
+  
+  --hm-terracotta: #C8593B;
+  
+  --hm-sage: #5C7A5E;
+  --hm-sage-soft: #E8EFE6;
+  
+  /* Base Tailwind Vars */
+  --background: var(--hm-bg-cream);
+  --foreground: var(--hm-text-near-black);
+  --card: var(--hm-card-white);
+  --card-foreground: var(--hm-text-near-black);
+  --popover: var(--hm-card-white);
+  --popover-foreground: var(--hm-text-near-black);
+  --primary: var(--hm-terracotta);
+  --primary-foreground: #ffffff;
+  --secondary: var(--hm-indigo-soft);
+  --secondary-foreground: var(--hm-indigo);
+  --muted: var(--hm-bg-cream);
+  --muted-foreground: var(--hm-text-muted);
+  --accent: var(--hm-indigo-soft);
+  --accent-foreground: var(--hm-indigo);
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --border: var(--hm-card-border);
+  --input: var(--hm-card-white);
+  --ring: var(--hm-indigo);
+  --radius: 0.75rem; /* 12px */
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* Custom HireMind Colors */
+  --color-hm-bg-cream: var(--hm-bg-cream);
+  --color-hm-card-white: var(--hm-card-white);
+  --color-hm-card-border: var(--hm-card-border);
+  --color-hm-text-near-black: var(--hm-text-near-black);
+  --color-hm-text-muted: var(--hm-text-muted);
+  --color-hm-text-faint: var(--hm-text-faint);
+  --color-hm-indigo: var(--hm-indigo);
+  --color-hm-indigo-soft: var(--hm-indigo-soft);
+  --color-hm-terracotta: var(--hm-terracotta);
+  --color-hm-sage: var(--hm-sage);
+  --color-hm-sage-soft: var(--hm-sage-soft);
+
+  --radius-sm: 0.5rem; /* 8px */
+  --radius-md: 0.75rem; /* 12px */
+  --radius-lg: 0.75rem; /* 12px */
+  --radius-xl: 1rem;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-inter), system-ui, sans-serif;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-fraunces), Georgia, serif;
+}
+
+/* Conic gradient ring */
+.progress-ring {
+  transform: rotate(-90deg);
+}
