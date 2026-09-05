@@ -145,6 +145,12 @@ def generate_profile(unified_profile_path: str):
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(generated_profile, f, ensure_ascii=False, indent=2)
 
+    # Also save to Student_Profile_Database with generated prefix for fallback access
+    student_db_filename = f"gen_{output_filename}"
+    student_db_path = os.path.join(STUDENT_DB_DIR, student_db_filename)
+    with open(student_db_path, "w", encoding="utf-8") as f:
+        json.dump(generated_profile, f, ensure_ascii=False, indent=2)
+
     print(f"Generated and saved profile: {output_path}")
     return output_path
 

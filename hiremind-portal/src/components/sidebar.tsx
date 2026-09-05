@@ -11,6 +11,7 @@ import {
   LogOut,
   Plus,
   Building2,
+  Cpu,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { type UserRole } from "@/types";
@@ -44,6 +45,11 @@ export default function Sidebar({ role, className }: SidebarProps) {
             label: "My Applications",
             href: "/candidate/applications",
             icon: FileText,
+          },
+          {
+            label: "Resume Parser AI",
+            href: "/candidate/resume-parser",
+            icon: Cpu,
           },
           {
             label: "Profile",

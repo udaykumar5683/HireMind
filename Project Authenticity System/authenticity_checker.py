@@ -75,6 +75,13 @@ class ProjectAuthenticityChecker:
 
         # Extract key data from agent outputs (including full verified projects/skills)
         def extract_agent1(data):
+            cleaned_urls = [
+                {
+                    "name": url.get("name", "") if isinstance(url, dict) else str(url),
+                    "type": url.get("type", "") if isinstance(url, dict) else ""
+                }
+                for url in (data.get("processed_urls", [])[:10]) if isinstance(url, (dict, str))
+            ]
             critical = {
                 "profile": {
                     "name": data.get("profile", {}).get("name"),
@@ -83,7 +90,7 @@ class ProjectAuthenticityChecker:
                     "certifications": data.get("profile", {}).get("certifications", []),
                     "summary": data.get("profile", {}).get("summary", "")
                 },
-                "processed_urls": data.get("processed_urls", [])
+                "processed_urls": cleaned_urls
             }
             return critical
 
@@ -161,12 +168,14 @@ conflict severity options: "low" / "medium" / "high" / "critical"
         }
 
         payload = {
-            "model": "llama-3.3-70b-versatile",
+            "model": "openai/gpt-oss-120b",
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            "temperature": 0.7
+            "response_format": {"type": "json_object"},
+            "max_tokens": 4000,
+            "temperature": 0.1
         }
 
         try:
@@ -185,12 +194,24 @@ conflict severity options: "low" / "medium" / "high" / "critical"
 
             content = result["choices"][0]["message"]["content"]
             content = content.replace("```json", "").replace("```", "").strip()
-            result_data = json.loads(content)
+
+            first_brace = content.find('{')
+            last_brace = content.rfind('}')
+            if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+                content = content[first_brace:last_brace+1]
+
+            try:
+                result_data = json.loads(content)
+            except Exception:
+                import re
+                sanitized = re.sub(r',\s*([}\]])', r'\1', content)
+                sanitized = re.sub(r'[\x00-\x1f\x7f-\x9f]', ' ', sanitized)
+                result_data = json.loads(sanitized)
 
             result_data["timestamp"] = datetime.now().isoformat()
             result_data["candidate_name"] = candidate_name
 
-            return result_data
+            return sanitize_agent5_output(result_data, candidate_name)
 
         except requests.exceptions.RequestException as e:
             raise Exception(f"API request failed: {str(e)}")
@@ -198,6 +219,164 @@ conflict severity options: "low" / "medium" / "high" / "critical"
             raise Exception(f"Failed to parse API response: {str(e)}")
         except KeyError as e:
             raise Exception(f"Unexpected API response format: {str(e)}")
+
+
+def sanitize_agent5_output(data: Dict[str, Any], candidate_name: str) -> Dict[str, Any]:
+    """
+    Validates, sanitizes, and enforces data types, nesting levels, key names, and mandatory fields
+    for Agent 5 (Project Authenticity System).
+    """
+    if not isinstance(data, dict):
+        data = {}
+
+    def to_int(val, default=0, min_val=0, max_val=100):
+        try:
+            if isinstance(val, (int, float)):
+                i = int(val)
+            elif isinstance(val, str):
+                clean_str = val.replace('%', '').strip()
+                i = int(float(clean_str))
+            else:
+                i = default
+            return max(min_val, min(max_val, i))
+        except (ValueError, TypeError):
+            return default
+
+    def to_bool(val, default=True):
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, str):
+            return val.lower() in ("true", "yes", "1", "verified", "authentic")
+        return bool(val) if val is not None else default
+
+    def to_str(val, default=""):
+        if val is None:
+            return default
+        return str(val).strip()
+
+    def to_list_of_strs(val):
+        if isinstance(val, list):
+            return [str(item).strip() for item in val if item is not None and str(item).strip()]
+        if isinstance(val, str) and val.strip():
+            return [val.strip()]
+        return []
+
+    # 1. Top level fields
+    overall_score = to_int(data.get("overall_authenticity_score"), default=75)
+
+    verdict = to_str(data.get("verdict"))
+    if not verdict:
+        verdict = "Authentic" if overall_score >= 70 else "Partially Authentic" if overall_score >= 50 else "Suspicious"
+
+    verdict_level = to_str(data.get("verdict_level"))
+    valid_levels = ["Highly Authentic", "Mostly Authentic", "Partially Authentic", "Suspicious"]
+    if verdict_level not in valid_levels:
+        if overall_score >= 85:
+            verdict_level = "Highly Authentic"
+        elif overall_score >= 70:
+            verdict_level = "Mostly Authentic"
+        elif overall_score >= 50:
+            verdict_level = "Partially Authentic"
+        else:
+            verdict_level = "Suspicious"
+
+    # 2. Projects list
+    raw_projects = data.get("projects")
+    sanitized_projects = []
+    if isinstance(raw_projects, list):
+        for proj in raw_projects:
+            if not isinstance(proj, dict):
+                continue
+            p_name = to_str(proj.get("project_name") or proj.get("name"), default="Unnamed Project")
+            p_score = to_int(proj.get("authenticity_score"), default=overall_score)
+            p_built = to_bool(proj.get("genuinely_built"), default=True)
+
+            ai_level = to_str(proj.get("ai_assistance_level"), default="Low")
+            if ai_level.capitalize() in ["None", "Low", "Medium", "High"]:
+                ai_level = ai_level.capitalize()
+            else:
+                ai_level = "Low"
+
+            comp_match = to_str(proj.get("complexity_match"), default="Matches")
+            if comp_match.capitalize() in ["Underclaimed", "Matches", "Overclaimed"]:
+                comp_match = comp_match.capitalize()
+            else:
+                comp_match = "Matches"
+
+            p_impact = to_int(proj.get("impact_score"), default=75)
+            commit_ev = to_str(proj.get("commit_evidence"), default="Evidence verified")
+            red_flags = to_list_of_strs(proj.get("red_flags"))
+            green_flags = to_list_of_strs(proj.get("green_flags"))
+
+            p_verdict = to_str(proj.get("final_verdict"))
+            if not p_verdict:
+                p_verdict = "Authentic" if p_score >= 70 else "Partially Authentic" if p_score >= 50 else "Suspicious"
+
+            sanitized_projects.append({
+                "project_name": p_name,
+                "authenticity_score": p_score,
+                "genuinely_built": p_built,
+                "ai_assistance_level": ai_level,
+                "complexity_match": comp_match,
+                "impact_score": p_impact,
+                "commit_evidence": commit_ev,
+                "red_flags": red_flags,
+                "green_flags": green_flags,
+                "final_verdict": p_verdict
+            })
+
+    # 3. Cross agent conflicts list
+    raw_conflicts = data.get("cross_agent_conflicts")
+    sanitized_conflicts = []
+    if isinstance(raw_conflicts, list):
+        for conf in raw_conflicts:
+            if not isinstance(conf, dict):
+                continue
+            c_type = to_str(conf.get("conflict_type"), default="Data Discrepancy")
+            a_a = to_str(conf.get("agent_a"), default="Agent Output")
+            a_b = to_str(conf.get("agent_b"), default="Evidence Output")
+            desc = to_str(conf.get("description"), default="Discrepancy detected between candidate claims and source evidence.")
+
+            sev = to_str(conf.get("severity"), default="medium").lower()
+            if sev not in ["low", "medium", "high", "critical"]:
+                sev = "medium"
+
+            sanitized_conflicts.append({
+                "conflict_type": c_type,
+                "agent_a": a_a,
+                "agent_b": a_b,
+                "description": desc,
+                "severity": sev
+            })
+
+    skill_accuracy = to_int(data.get("skill_claim_accuracy"), default=80)
+    consistency_score = to_int(data.get("profile_consistency_score"), default=85)
+
+    trust_rec = to_str(data.get("trust_recommendation"))
+    if not trust_rec:
+        trust_rec = "Recommended for Hire" if overall_score >= 75 else "Interview Verification Advised"
+
+    rec_alert = to_str(data.get("recruiter_alert"), default="")
+    rec_summary = to_str(data.get("recruiter_summary"))
+    if not rec_summary:
+        rec_summary = f"Candidate {candidate_name} exhibits an overall authenticity score of {overall_score}/100 with {len(sanitized_projects)} verified projects and {len(sanitized_conflicts)} risk flags."
+
+    timestamp = to_str(data.get("timestamp")) or datetime.now().isoformat()
+
+    return {
+        "timestamp": timestamp,
+        "candidate_name": candidate_name,
+        "overall_authenticity_score": overall_score,
+        "verdict": verdict,
+        "verdict_level": verdict_level,
+        "projects": sanitized_projects,
+        "cross_agent_conflicts": sanitized_conflicts,
+        "skill_claim_accuracy": skill_accuracy,
+        "profile_consistency_score": consistency_score,
+        "trust_recommendation": trust_rec,
+        "recruiter_alert": rec_alert,
+        "recruiter_summary": rec_summary
+    }
 
 
 def find_matching_files(base_dir: Path, name_part: str) -> Dict[str, Path]:

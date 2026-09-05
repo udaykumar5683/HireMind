@@ -3,6 +3,8 @@ HireMind - URL Extractor Module
 Extracts candidate data from GitHub, LinkedIn, HackerRank, and portfolio websites.
 """
 
+from __future__ import annotations
+
 import re
 import json
 import time
@@ -367,16 +369,28 @@ def extract_leetcode(leetcode_url: str) -> dict:
     if graphql_result.get("status") == "success":
         return graphql_result
     
-    # If GraphQL failed, try HTML/Playwright fallback
+    # If GraphQL failed, try HTML/Playwright fallback (if playwright is installed)
     try:
-        from playwright.sync_api import sync_playwright
-        
+        try:
+            from playwright.sync_api import sync_playwright
+            playwright_available = True
+        except ImportError:
+            playwright_available = False
+
+        if not playwright_available:
+            return {
+                "source": "leetcode",
+                "status": "failed",
+                "method_attempted": "playwright (not installed — requests-only mode)",
+                "error_message": "Playwright not installed on this host (free tier). GraphQL was also unavailable."
+            }
+
         result = {
             "source": "leetcode",
             "status": "failed",
             "method_attempted": "playwright"
         }
-        
+
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page(extra_http_headers=dict(HEADERS))
@@ -384,14 +398,14 @@ def extract_leetcode(leetcode_url: str) -> dict:
             page.wait_for_timeout(2000)
             html_content = page.content()
             browser.close()
-        
+
         soup = BeautifulSoup(html_content, "lxml")
         result["raw_html"] = html_content[:5000]  # Store raw HTML snippet
         result["status"] = "success"
         result["method_attempted"] = "playwright"
-        
+
         return result
-        
+
     except Exception as e:
         return {
             "source": "leetcode",
@@ -448,17 +462,23 @@ def extract_portfolio(portfolio_url: str) -> dict:
 
     if use_playwright:
         try:
-            from playwright.sync_api import sync_playwright
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True)
-                page = browser.new_page(extra_http_headers=dict(HEADERS))
-                page.goto(portfolio_url, wait_until="networkidle", timeout=30000)
-                page.wait_for_timeout(3000)  # Wait 3 seconds for JS to render
-                html_content = page.content()
-                browser.close()
-            result["playwright_used"] = True
-        except ImportError:
-            result["playwright_error"] = "Playwright not installed"
+            try:
+                from playwright.sync_api import sync_playwright
+                playwright_available = True
+            except ImportError:
+                playwright_available = False
+
+            if playwright_available:
+                with sync_playwright() as p:
+                    browser = p.chromium.launch(headless=True)
+                    page = browser.new_page(extra_http_headers=dict(HEADERS))
+                    page.goto(portfolio_url, wait_until="networkidle", timeout=30000)
+                    page.wait_for_timeout(3000)  # Wait 3 seconds for JS to render
+                    html_content = page.content()
+                    browser.close()
+                result["playwright_used"] = True
+            else:
+                result["playwright_error"] = "Playwright not installed on this host (requests-only mode for SPA sites) — try adding proxycurl or direct GitHub URLs instead."
         except Exception as e:
             result["playwright_error"] = str(e)
 

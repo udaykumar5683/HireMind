@@ -1,0 +1,20 @@
+FROM node:22-alpine AS build
+
+WORKDIR /app
+COPY hiremind-portal/package.json hiremind-portal/package-lock.json ./
+RUN npm ci
+COPY hiremind-portal ./
+ARG NEXT_PUBLIC_RESUME_PARSER_URL=http://localhost:5173
+ARG NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
+ENV NEXT_PUBLIC_RESUME_PARSER_URL=$NEXT_PUBLIC_RESUME_PARSER_URL
+ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
+ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
+RUN npm run build
+
+FROM node:22-alpine
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=build /app ./
+EXPOSE 3000
+CMD ["npm", "run", "start", "--", "-p", "3000"]

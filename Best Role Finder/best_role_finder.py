@@ -66,12 +66,14 @@ IMPORTANT: Return ONLY valid JSON, no extra text, no markdown."""
         }
 
         payload = {
-            "model": "llama-3.3-70b-versatile",
+            "model": "openai/gpt-oss-120b",
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            "temperature": 0.7
+            "response_format": {"type": "json_object"},
+            "max_tokens": 4000,
+            "temperature": 0.1
         }
 
         try:
@@ -97,8 +99,18 @@ IMPORTANT: Return ONLY valid JSON, no extra text, no markdown."""
             # Clean up any markdown fences
             content = content.replace("```json", "").replace("```", "").strip()
             
-            # Parse JSON
-            result_data = json.loads(content)
+            first_brace = content.find('{')
+            last_brace = content.rfind('}')
+            if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+                content = content[first_brace:last_brace+1]
+
+            try:
+                result_data = json.loads(content)
+            except Exception:
+                import re
+                sanitized = re.sub(r',\s*([}\]])', r'\1', content)
+                sanitized = re.sub(r'[\x00-\x1f\x7f-\x9f]', ' ', sanitized)
+                result_data = json.loads(sanitized)
             
             # Force override timestamp, candidate name, and strength score to ensure correctness
             result_data["timestamp"] = datetime.now().isoformat()

@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
 import './App.css';
 
+const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:5000').replace(/\/$/, '');
+
 function App() {
   const [file, setFile] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -32,14 +34,19 @@ function App() {
     });
   }, []);
   
-  // New form inputs
+  // Form input states
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [githubUrl, setGithubUrl] = useState("");
   const [linkedinUrl, setLinkedinUrl] = useState("");
   const [portfolioUrl, setPortfolioUrl] = useState("");
-  const [customUrls, setCustomUrls] = useState([]); // [{ id: number, name: string, url: string }
+  const [customUrls, setCustomUrls] = useState([]); // [{ id: number, name: string, url: string }]
   
+  // UI interaction & validation states
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const [errors, setErrors] = useState({ name: null, email: null, file: null });
+  const [touched, setTouched] = useState({ name: false, email: false, file: false });
+
   const fileInputRef = useRef(null);
 
   const steps = [
@@ -54,19 +61,76 @@ function App() {
 
   const handleDragOver = (e) => {
     e.preventDefault();
+    if (!isProcessing) {
+      setIsDraggingOver(true);
+    }
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    setIsDraggingOver(false);
   };
 
   const handleDrop = (e) => {
     e.preventDefault();
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      setFile(e.dataTransfer.files[0]);
+    setIsDraggingOver(false);
+    if (!isProcessing && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const selectedFile = e.dataTransfer.files[0];
+      setFile(selectedFile);
+      if (errors.file) {
+        setErrors((prev) => ({ ...prev, file: null }));
+      }
     }
   };
 
   const handleFileSelect = (e) => {
     if (e.target.files && e.target.files.length > 0) {
-      setFile(e.target.files[0]);
+      const selectedFile = e.target.files[0];
+      setFile(selectedFile);
+      if (errors.file) {
+        setErrors((prev) => ({ ...prev, file: null }));
+      }
     }
+  };
+
+  const formatFileSize = (bytes) => {
+    if (!bytes) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  };
+
+  const getFileIcon = (fileObj) => {
+    if (!fileObj) return 'ti-file';
+    const type = fileObj.type || '';
+    const fileName = fileObj.name || '';
+    if (type.includes('pdf') || fileName.toLowerCase().endsWith('.pdf')) return 'ti-file-type-pdf';
+    if (type.includes('image') || /\.(png|jpg|jpeg|webp)$/i.test(fileName)) return 'ti-photo';
+    return 'ti-file-text';
+  };
+
+  const validateField = (fieldName, value) => {
+    let error = null;
+    if (fieldName === 'name') {
+      if (!value || !value.trim()) error = 'Full Name is required';
+    } else if (fieldName === 'email') {
+      if (!value || !value.trim()) {
+        error = 'Email Address is required';
+      } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())) {
+        error = 'Please enter a valid email address';
+      }
+    } else if (fieldName === 'file') {
+      if (!value) error = 'Please upload a resume file';
+    }
+    return error;
+  };
+
+  const handleBlur = (fieldName) => {
+    setTouched((prev) => ({ ...prev, [fieldName]: true }));
+    let val = fieldName === 'name' ? name : fieldName === 'email' ? email : file;
+    const err = validateField(fieldName, val);
+    setErrors((prev) => ({ ...prev, [fieldName]: err }));
   };
 
   const extractPdfText = async (file) => {
@@ -166,18 +230,18 @@ function App() {
       ];
     }
 
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    const response = await fetch(`${API_BASE_URL}/parse-resume`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${import.meta.env.VITE_GROQ_API_KEY}`
+        'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        model: isImage ? 'meta-llama/llama-4-maverick-17b-128e-instruct' : 'llama-3.3-70b-versatile',
+      body: JSON.stringify({ payload: {
+        model: 'openai/gpt-oss-120b',
         messages,
+        response_format: { type: 'json_object' },
         max_tokens: 2000,
         temperature: 0
-      })
+      }})
     });
 
     if (!response.ok) {
@@ -190,9 +254,32 @@ function App() {
       throw new Error('No choices returned from Groq API');
     }
 
-    let content = data.choices[0].message.content;
-    content = content.replace(/```json|```/g, '').trim();
-    return JSON.parse(content);
+    let content = data.choices[0].message.content || '';
+    
+    // Find JSON boundary
+    const firstBrace = content.indexOf('{');
+    const lastBrace = content.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      content = content.substring(firstBrace, lastBrace + 1);
+    } else {
+      content = content.replace(/```json|```/g, '').trim();
+    }
+
+    try {
+      return JSON.parse(content);
+    } catch (parseErr) {
+      console.warn("Initial JSON parse failed, attempting auto-repair:", parseErr);
+      // Remove trailing commas and clean control characters
+      let sanitized = content
+        .replace(/,\s*([}\]])/g, '$1')
+        .replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ');
+
+      try {
+        return JSON.parse(sanitized);
+      } catch (secondErr) {
+        throw new Error(`Failed to parse AI resume JSON: ${secondErr.message}`);
+      }
+    }
   };
 
   const parseGithubUrl = (url) => {
@@ -207,7 +294,10 @@ function App() {
   // Helper: Retry with exponential backoff
   const fetchWithRetry = async (url, options, retries = 3, delay = 1000) => {
     try {
-      const res = await fetch(url, options);
+      const requestUrl = url.startsWith('https://api.github.com/')
+        ? `${API_BASE_URL}/github/${url.slice('https://api.github.com/'.length)}`
+        : url;
+      const res = await fetch(requestUrl, options);
       
       // Log rate limit info
       const remaining = res.headers.get('x-ratelimit-remaining');
@@ -277,7 +367,7 @@ function App() {
     if (!parsed) return githubData;
 
     githubData.fetch_status = 'failed';
-    const headers = { 'Authorization': `Bearer ${import.meta.env.VITE_GITHUB_TOKEN}` };
+    const headers = {};
 
     try {
       if (parsed.type === 'profile') {
@@ -355,20 +445,15 @@ function App() {
   };
 
   const handleProcess = async () => {
-    if (!name || !email) {
-      alert('Please fill in your name and email');
-      return;
-    }
-    
-    if (!file) {
-      alert('Please upload a resume');
-      return;
-    }
+    const nameErr = validateField('name', name);
+    const emailErr = validateField('email', email);
+    const fileErr = validateField('file', file);
 
-    // Email format validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      alert('Please enter a valid email address');
+    const newErrors = { name: nameErr, email: emailErr, file: fileErr };
+    setErrors(newErrors);
+    setTouched({ name: true, email: true, file: true });
+
+    if (nameErr || emailErr || fileErr) {
       return;
     }
 
@@ -441,7 +526,7 @@ function App() {
 
       // Save to backend
       try {
-        const saveRes = await fetch('http://localhost:5000/save-profile', {
+        const saveRes = await fetch(`${API_BASE_URL}/save-profile`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -467,14 +552,14 @@ function App() {
       setEnrichedProfile(enriched);
     } catch (err) {
       console.error('Error processing resume:', err);
-      alert('Error processing resume. Please try again.');
+      alert(`Error processing resume: ${err.message || 'Please try again.'}`);
     } finally {
       setIsProcessing(false);
     }
   };
 
-  const handleRunPipeline = async (filepath) => {
-    const targetPath = filepath || savedFilePath;
+  const handleRunPipeline = async (filepathParam) => {
+    const targetPath = (typeof filepathParam === 'string' ? filepathParam : null) || savedFilePath;
     if (!targetPath) {
       alert('No saved profile to process');
       return;
@@ -489,7 +574,7 @@ function App() {
     });
 
     try {
-      const runRes = await fetch('http://localhost:5000/run-pipeline', {
+      const runRes = await fetch(`${API_BASE_URL}/run-pipeline`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ filepath: targetPath })
@@ -502,7 +587,7 @@ function App() {
 
       // Poll for pipeline status
       const pollInterval = setInterval(async () => {
-        const statusRes = await fetch('http://localhost:5000/pipeline-status');
+        const statusRes = await fetch(`${API_BASE_URL}/pipeline-status`);
         const status = await statusRes.json();
         setPipelineState(status);
 
@@ -638,7 +723,7 @@ function App() {
       }
 
       console.log('Extracting data from URL:', fullUrl);
-      const res = await fetch('http://localhost:5000/extract-url', {
+      const res = await fetch(`${API_BASE_URL}/extract-url`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -689,168 +774,1698 @@ function App() {
     return processed;
   };
 
+  // Helper to render recruiter-friendly URL result cards
+  const renderUrlDataCard = (item) => {
+    if (!item) return null;
+    const d = item.data || {};
+    const source = (d.source || item.name || '').toLowerCase();
+    const itemUrlName = (item.name || '').toLowerCase();
+
+    return (
+      <div className="url-result-card" key={item.url}>
+        {/* Header bar */}
+        <div className="url-card-header">
+          <div className="url-card-title-group">
+            <i className={`ti ${item.accessible ? 'ti-circle-check-filled text-emerald' : 'ti-alert-circle-filled text-rose'}`}></i>
+            <h4 className="url-card-name">{item.name}</h4>
+            <span className={`status-badge-sm ${item.accessible ? 'bg-emerald' : 'bg-rose'}`}>
+              {(d.source || item.name || 'URL').toUpperCase()}
+            </span>
+          </div>
+          <a href={item.url} target="_blank" rel="noopener noreferrer" className="url-card-link">
+            <i className="ti ti-external-link"></i> {item.url}
+          </a>
+        </div>
+
+        {/* Error Banner */}
+        {(d.error || item.error) && (
+          <div className="recruiter-alert recruiter-alert-danger">
+            <i className="ti ti-alert-triangle"></i>
+            <span><strong>Fetch Warning:</strong> {d.error || item.error}</span>
+          </div>
+        )}
+
+        {/* Structured Content based on URL Source */}
+        {d && (source.includes('github') || itemUrlName.includes('github')) ? (
+          <div className="url-structured-body">
+            <div className="metrics-grid">
+              <div className="metric-box">
+                <span className="metric-value">{d.followers ?? '0'}</span>
+                <span className="metric-label"><i className="ti ti-users"></i> Followers</span>
+              </div>
+              <div className="metric-box">
+                <span className="metric-value">{d.public_repos ?? d.total_repos ?? (d.repositories?.length || 0)}</span>
+                <span className="metric-label"><i className="ti ti-folder"></i> Repositories</span>
+              </div>
+              <div className="metric-box">
+                <span className="metric-value">{d.total_stars ?? 0}</span>
+                <span className="metric-label"><i className="ti ti-star"></i> Total Stars</span>
+              </div>
+            </div>
+
+            {d.bio && (
+              <div className="url-info-section">
+                <p className="url-bio">"{d.bio}"</p>
+              </div>
+            )}
+
+            {d.top_languages && d.top_languages.length > 0 && (
+              <div className="url-info-section">
+                <span className="url-info-title">Primary Languages:</span>
+                <div className="tag-pills">
+                  {d.top_languages.map((lang, idx) => (
+                    <span key={idx} className="tag-pill tag-purple">{lang}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {d.repositories && d.repositories.length > 0 && (
+              <div className="url-info-section">
+                <span className="url-info-title">Key Repositories ({d.repositories.length}):</span>
+                <div className="url-sublist">
+                  {d.repositories.slice(0, 5).map((repo, idx) => (
+                    <div key={idx} className="url-subitem">
+                      <div className="repo-top">
+                        <a href={repo.url} target="_blank" rel="noopener noreferrer" className="repo-title-link">
+                          <i className="ti ti-brand-github"></i> {repo.name}
+                        </a>
+                        {repo.language && <span className="tag-pill tag-neutral">{repo.language}</span>}
+                      </div>
+                      {repo.description && <p className="repo-desc">{repo.description}</p>}
+                      <div className="repo-stats-row">
+                        <span><i className="ti ti-star"></i> {repo.stars || 0}</span>
+                        <span><i className="ti ti-git-branch"></i> {repo.forks || 0}</span>
+                        {repo.updated_at && <span><i className="ti ti-calendar"></i> {repo.updated_at}</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : d && (source.includes('hackerrank') || itemUrlName.includes('hackerrank')) ? (
+          <div className="url-structured-body">
+            <div className="metrics-grid">
+              <div className="metric-box">
+                <span className="metric-value">{d.points ?? 'N/A'}</span>
+                <span className="metric-label"><i className="ti ti-award"></i> Total Points</span>
+              </div>
+              <div className="metric-box">
+                <span className="metric-value">{d.level ?? 'N/A'}</span>
+                <span className="metric-label"><i className="ti ti-trending-up"></i> Hacker Level</span>
+              </div>
+              <div className="metric-box">
+                <span className="metric-value">{d.badges?.length || 0}</span>
+                <span className="metric-label"><i className="ti ti-certificate"></i> Badges</span>
+              </div>
+            </div>
+
+            {d.badges && d.badges.length > 0 && (
+              <div className="url-info-section">
+                <span className="url-info-title">Badges & Skills:</span>
+                <div className="tag-pills">
+                  {d.badges.map((b, idx) => (
+                    <span key={idx} className="tag-pill tag-amber">
+                      <i className="ti ti-star-filled"></i> {b.name} ({b.stars || 0}★)
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : d && (source.includes('leetcode') || itemUrlName.includes('leetcode')) ? (
+          <div className="url-structured-body">
+            <div className="metrics-grid">
+              <div className="metric-box">
+                <span className="metric-value">{d.total_solved ?? (d.easy_solved + d.medium_solved + d.hard_solved) ?? 'N/A'}</span>
+                <span className="metric-label"><i className="ti ti-check"></i> Problems Solved</span>
+              </div>
+              <div className="metric-box">
+                <span className="metric-value">{d.ranking ? `#${d.ranking}` : 'N/A'}</span>
+                <span className="metric-label"><i className="ti ti-trophy"></i> Global Rank</span>
+              </div>
+              <div className="metric-box">
+                <span className="metric-value">{d.acceptance_rate ? `${d.acceptance_rate}%` : 'N/A'}</span>
+                <span className="metric-label"><i className="ti ti-percentage"></i> Acceptance</span>
+              </div>
+            </div>
+
+            <div className="url-info-section">
+              <span className="url-info-title">Difficulty Breakdown:</span>
+              <div className="tag-pills">
+                {d.easy_solved !== undefined && <span className="tag-pill tag-emerald">Easy: {d.easy_solved}</span>}
+                {d.medium_solved !== undefined && <span className="tag-pill tag-amber">Medium: {d.medium_solved}</span>}
+                {d.hard_solved !== undefined && <span className="tag-pill tag-rose">Hard: {d.hard_solved}</span>}
+              </div>
+            </div>
+          </div>
+        ) : d && (source.includes('linkedin') || itemUrlName.includes('linkedin')) ? (
+          /* Recruiter-Friendly LinkedIn Profile Component */
+          <div className="url-structured-body">
+            {/* Candidate Header / Intro Meta */}
+            <div className="archetype-banner mb-16">
+              <div className="archetype-info">
+                <span className="archetype-title">
+                  <i className="ti ti-brand-linkedin text-indigo"></i> {d.name || d.headline?.split('|')[0] || item.name || 'LinkedIn Profile'}
+                </span>
+                {d.headline && <p className="pitch-body mt-4">"{d.headline}"</p>}
+                <div className="meta-pills mt-8">
+                  {d.location && <span className="tag-pill tag-blue"><i className="ti ti-map-pin"></i> {d.location}</span>}
+                  {d.connections !== undefined && <span className="tag-pill tag-purple"><i className="ti ti-users"></i> {d.connections}+ Connections</span>}
+                  {d.source && <span className="tag-pill tag-neutral"><i className="ti ti-world"></i> LinkedIn Verified</span>}
+                </div>
+              </div>
+            </div>
+
+            {/* Summary / Bio */}
+            {d.summary && (
+              <div className="url-info-section">
+                <span className="url-info-title"><i className="ti ti-user-check"></i> Professional Summary</span>
+                <p className="url-text-desc">{d.summary}</p>
+              </div>
+            )}
+
+            {/* Work Experiences */}
+            {d.experiences && d.experiences.length > 0 && (
+              <div className="url-info-section">
+                <span className="url-info-title"><i className="ti ti-briefcase"></i> Work Experience ({d.experiences.length})</span>
+                <div className="recruiter-grid-list">
+                  {d.experiences.map((exp, idx) => (
+                    <div key={idx} className="verified-item-card border-indigo">
+                      <div className="item-title-row">
+                        <span className="item-title">{exp.title || 'Role'}</span>
+                        {exp.company && <span className="badge-small bg-indigo">{exp.company}</span>}
+                      </div>
+                      {(exp.starts_at || exp.duration) && (
+                        <p className="item-reasoning text-indigo mt-4">
+                          <i className="ti ti-calendar"></i> {exp.duration || `${exp.starts_at || ''} - ${exp.ends_at || 'Present'}`}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Education */}
+            {d.education && d.education.length > 0 && (
+              <div className="url-info-section">
+                <span className="url-info-title"><i className="ti ti-school"></i> Education</span>
+                <div className="recruiter-grid-list">
+                  {d.education.map((edu, idx) => (
+                    <div key={idx} className="verified-item-card border-purple">
+                      <div className="item-title-row">
+                        <span className="item-title">{edu.school || 'University'}</span>
+                      </div>
+                      <p className="item-reasoning mt-4">
+                        {edu.degree} {edu.field ? `in ${edu.field}` : ''}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Endorsed Skills */}
+            {d.skills && d.skills.length > 0 && (
+              <div className="url-info-section">
+                <span className="url-info-title"><i className="ti ti-list-check"></i> Endorsed Skills ({d.skills.length}):</span>
+                <div className="tag-pills">
+                  {d.skills.map((s, idx) => <span key={idx} className="tag-pill tag-blue">{typeof s === 'string' ? s : s.name}</span>)}
+                </div>
+              </div>
+            )}
+
+            {/* Certifications */}
+            {d.certifications && d.certifications.length > 0 && (
+              <div className="url-info-section">
+                <span className="url-info-title"><i className="ti ti-certificate"></i> Certifications:</span>
+                <div className="tag-pills">
+                  {d.certifications.map((c, idx) => <span key={idx} className="tag-pill tag-amber"><i className="ti ti-award"></i> {typeof c === 'string' ? c : c.name}</span>)}
+                </div>
+              </div>
+            )}
+
+            {/* Fallback for Web Scraped Sections */}
+            {!d.experiences && !d.summary && Object.keys(d).some(k => k.startsWith('section_')) && (
+              <div className="url-info-section">
+                <span className="url-info-title"><i className="ti ti-file-text"></i> Profile Sections Extracted</span>
+                {Object.entries(d).filter(([k]) => k.startsWith('section_')).map(([key, val], idx) => (
+                  <div key={idx} className="info-card mb-8">
+                    <span className="sublabel">{key.replace('section_', '').replace(/_/g, ' ').toUpperCase()}</span>
+                    <p className="box-text mt-4">{val}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          /* Recruiter-Friendly Portfolio / Personal Website Component */
+          <div className="url-structured-body">
+            {(d.title || d.meta_description || d.description) && (
+              <div className="archetype-banner mb-16">
+                <div className="archetype-info">
+                  <span className="archetype-title">
+                    <i className="ti ti-world text-emerald"></i> {d.title || item.name || 'Personal Portfolio'}
+                  </span>
+                  {(d.meta_description || d.description) && (
+                    <p className="pitch-body mt-4">"{d.meta_description || d.description}"</p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Extracted Emails & Contact Info */}
+            {d.emails_found && d.emails_found.length > 0 && (
+              <div className="url-info-section">
+                <span className="url-info-title"><i className="ti ti-mail"></i> Extracted Contact Details:</span>
+                <div className="tag-pills">
+                  {d.emails_found.map((email, idx) => (
+                    <span key={idx} className="tag-pill tag-emerald"><i className="ti ti-mail"></i> {email}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Social Links & Profiles Discovered */}
+            {d.social_links_found && d.social_links_found.length > 0 && (
+              <div className="url-info-section">
+                <span className="url-info-title"><i className="ti ti-link"></i> Linked Profiles Discovered:</span>
+                <div className="tag-pills">
+                  {d.social_links_found.map((link, idx) => (
+                    <a key={idx} href={link} target="_blank" rel="noopener noreferrer" className="tag-pill tag-purple-outline">
+                      <i className="ti ti-external-link"></i> {link.replace(/^https?:\/\/(www\.)?/, '').split('/')[0]}
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Skills Discovered */}
+            {d.skills_found && d.skills_found.length > 0 && (
+              <div className="url-info-section">
+                <span className="url-info-title"><i className="ti ti-sparkles"></i> Portfolio Skills Identified:</span>
+                <div className="tag-pills">
+                  {d.skills_found.map((s, idx) => <span key={idx} className="tag-pill tag-blue">{s}</span>)}
+                </div>
+              </div>
+            )}
+
+            {/* Page Architecture / Sections */}
+            {d.sections && d.sections.length > 0 && (
+              <div className="url-info-section">
+                <span className="url-info-title"><i className="ti ti-layout-grid"></i> Page Architecture & Sections:</span>
+                <div className="tag-pills">
+                  {d.sections.slice(0, 8).map((sec, idx) => (
+                    <span key={idx} className="tag-pill tag-neutral">
+                      <strong>{sec.level?.toUpperCase()}:</strong> {sec.text}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Projects Discovered */}
+            {d.projects_found && d.projects_found.length > 0 && (
+              <div className="url-info-section">
+                <span className="url-info-title"><i className="ti ti-folder"></i> Showcase Projects Discovered ({d.projects_found.length}):</span>
+                <div className="recruiter-grid-list">
+                  {d.projects_found.map((p, idx) => (
+                    <div key={idx} className="verified-item-card border-emerald">
+                      <div className="item-title-row">
+                        <span className="item-title">{typeof p === 'string' ? p : p.name || p.title}</span>
+                      </div>
+                      {typeof p === 'object' && p.description && (
+                        <p className="item-reasoning mt-4">{p.description}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Full Text Summary fallback if no other sections exist */}
+            {d.full_text && (!d.sections || d.sections.length === 0) && (!d.projects_found || d.projects_found.length === 0) && (
+              <div className="url-info-section">
+                <span className="url-info-title"><i className="ti ti-file-text"></i> Site Content Summary:</span>
+                <p className="url-text-desc">{d.full_text.slice(0, 450)}...</p>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Helper to render JSON file payload as a visual structured property tree
+  const StructuredPayloadGrid = ({ payload }) => {
+    const [copied, setCopied] = useState(false);
+
+    if (!payload || typeof payload !== 'object') {
+      return <div className="text-muted">No audit payload available</div>;
+    }
+
+    const handleCopy = () => {
+      navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    };
+
+    const renderValue = (val) => {
+      if (val === null || val === undefined) {
+        return <span className="val-badge val-null">N/A</span>;
+      }
+      if (typeof val === 'boolean') {
+        return <span className={`status-pill ${val ? 'status-verified' : 'status-unverified'}`}>{val ? 'TRUE' : 'FALSE'}</span>;
+      }
+      if (typeof val === 'number') {
+        return <span className="tag-pill tag-purple">{val}</span>;
+      }
+      if (typeof val === 'string') {
+        if (val.includes('verified') || val.includes('unverified')) {
+          return <span className={`status-pill status-${val}`}>{val.replace('_', ' ').toUpperCase()}</span>;
+        }
+        return <span className="val-text-content">{val}</span>;
+      }
+      if (Array.isArray(val)) {
+        if (val.length === 0) return <span className="val-text-muted">Empty (0 items)</span>;
+        return (
+          <div className="structured-array-container">
+            {val.map((item, idx) => (
+              <div key={idx} className="structured-array-card">
+                <span className="array-item-badge">Item #{idx + 1}</span>
+                <div className="array-item-body">
+                  {typeof item === 'object' && item !== null ? (
+                    <div className="structured-object-rows">
+                      {Object.entries(item).map(([k, v]) => (
+                        <div key={k} className="structured-kv-row">
+                          <span className="kv-key-label">{k.replace(/_/g, ' ').toUpperCase()}:</span>
+                          <div className="kv-val-box">{renderValue(v)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    renderValue(item)
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      }
+      if (typeof val === 'object') {
+        return (
+          <div className="structured-object-rows">
+            {Object.entries(val).map(([k, v]) => (
+              <div key={k} className="structured-kv-row">
+                <span className="kv-key-label">{k.replace(/_/g, ' ').toUpperCase()}:</span>
+                <div className="kv-val-box">{renderValue(v)}</div>
+              </div>
+            ))}
+          </div>
+        );
+      }
+      return String(val);
+    };
+
+    return (
+      <div className="structured-payload-container">
+        <div className="structured-payload-toolbar">
+          <div className="toolbar-title-group">
+            <i className="ti ti-sitemap text-indigo"></i>
+            <span className="toolbar-title">Audit File Payload - Structured Data Tree</span>
+          </div>
+          <button onClick={handleCopy} className="btn-copy-json">
+            <i className={`ti ${copied ? 'ti-check text-emerald' : 'ti-copy'}`}></i>
+            {copied ? 'Copied Payload!' : 'Copy Data'}
+          </button>
+        </div>
+
+        <div className="structured-payload-grid-body">
+          {Object.entries(payload).map(([rootKey, rootVal]) => (
+            <div key={rootKey} className="structured-root-card">
+              <div className="root-card-header">
+                <i className="ti ti-folder text-purple"></i>
+                <span className="root-key-title">{rootKey.replace(/_/g, ' ').toUpperCase()}</span>
+                <span className="plain-key-badge">({rootKey})</span>
+              </div>
+              <div className="root-card-content">
+                {renderValue(rootVal)}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  // Helper for syntax highlighting raw JSON payload
+  const JsonSyntaxHighlighter = ({ json }) => {
+    const [copied, setCopied] = useState(false);
+
+    const handleCopy = () => {
+      navigator.clipboard.writeText(JSON.stringify(json, null, 2));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    };
+
+    const renderJsonValue = (val, level = 0) => {
+      const indent = '  '.repeat(level);
+
+      if (val === null) {
+        return <span className="json-null">null</span>;
+      }
+      if (typeof val === 'boolean') {
+        return <span className="json-bool">{val.toString()}</span>;
+      }
+      if (typeof val === 'number') {
+        return <span className="json-number">{val}</span>;
+      }
+      if (typeof val === 'string') {
+        return <span className="json-string">"{val}"</span>;
+      }
+
+      if (Array.isArray(val)) {
+        if (val.length === 0) return '[]';
+        return (
+          <span>
+            [\n
+            {val.map((item, idx) => (
+              <span key={idx}>
+                {'  '.repeat(level + 1)}
+                {renderJsonValue(item, level + 1)}
+                {idx < val.length - 1 ? ',' : ''}\n
+              </span>
+            ))}
+            {indent}]
+          </span>
+        );
+      }
+
+      if (typeof val === 'object') {
+        const keys = Object.keys(val);
+        if (keys.length === 0) return '{}';
+        return (
+          <span>
+            {'{'}\n
+            {keys.map((key, idx) => (
+              <span key={key}>
+                {'  '.repeat(level + 1)}
+                <span className="json-key">"{key}"</span>: {renderJsonValue(val[key], level + 1)}
+                {idx < keys.length - 1 ? ',' : ''}\n
+              </span>
+            ))}
+            {indent}{'}'}
+          </span>
+        );
+      }
+
+      return String(val);
+    };
+
+    return (
+      <div className="json-syntax-container">
+        <div className="json-syntax-toolbar">
+          <span className="json-syntax-title">
+            <i className="ti ti-code"></i> Raw JSON Audit Payload (100% Data Parity)
+          </span>
+          <button onClick={handleCopy} className="btn-copy-json">
+            <i className={`ti ${copied ? 'ti-check text-emerald' : 'ti-copy'}`}></i>
+            {copied ? 'Copied Payload!' : 'Copy JSON'}
+          </button>
+        </div>
+        <pre className="json-syntax-code">
+          <code>{renderJsonValue(json, 0)}</code>
+        </pre>
+      </div>
+    );
+  };
+
+  const renderAgent2Output = (data) => {
+    if (!data) return null;
+    const score = data.credibility_score?.overall_credibility_score ?? data.credibility_score ?? 0;
+    const summary = data.evidence_summary || {};
+    const verifiedSkills = data.verified_skills || [];
+    const partiallyVerifiedSkills = data.partially_verified_skills || [];
+    const unverifiedSkills = data.unverified_skills || [];
+    const verifiedProjects = data.verified_projects || [];
+    const verifiedCerts = data.verified_certifications || [];
+    const riskFlags = data.risk_flags || [];
+
+    // Plain Language Technical Key Dictionary
+    const plainLanguageLabels = {
+      candidate_name: "Candidate Full Name",
+      timestamp: "Audit Generation Timestamp",
+      overall_credibility_score: "Overall Credibility Index",
+      resume_consistency: "Resume Structure Alignment",
+      skill_verification: "Skill Cross-Proof Score",
+      project_verification: "Code Repository Proof Score",
+      profile_evidence_strength: "Multi-Source Profile Breadth",
+      verification_status: "Verification Status Flag",
+      confidence_score: "Evidence Confidence Index",
+      supporting_sources: "Correlated Proof Sources",
+      reasoning: "Finding Analysis & Explanation",
+      affected_skill: "Affected Skill Claim",
+      affected_project: "Affected Project Claim",
+      severity: "Discrepancy Risk Severity"
+    };
+
+    return (
+      <div className="agent-result-card">
+        <div className="agent-card-header">
+          <div className="agent-title-group">
+            <i className="ti ti-shield-check agent-icon icon-emerald"></i>
+            <div>
+              <h4 className="agent-name">Agent 2: Evidence Correlation & Verification</h4>
+              <p className="agent-subtitle">Cross-verifies candidate claims against online source proof</p>
+            </div>
+          </div>
+          <div className={`score-badge ${score >= 75 ? 'score-high' : score >= 50 ? 'score-mid' : 'score-low'}`}>
+            <span className="score-num">{score}</span>
+            <span className="score-label">/ 100 Credibility</span>
+          </div>
+        </div>
+
+        {/* Stat Counters */}
+        <div className="metrics-grid">
+          <div className="metric-box">
+            <span className="metric-value text-emerald">{summary.total_verified_skills ?? verifiedSkills.length}</span>
+            <span className="metric-label"><i className="ti ti-circle-check"></i> Verified Skills</span>
+          </div>
+          <div className="metric-box">
+            <span className="metric-value text-indigo">{summary.total_verified_projects ?? verifiedProjects.length}</span>
+            <span className="metric-label"><i className="ti ti-folder-check"></i> Verified Projects</span>
+          </div>
+          <div className="metric-box">
+            <span className="metric-value text-purple">{summary.total_verified_certifications ?? verifiedCerts.length}</span>
+            <span className="metric-label"><i className="ti ti-certificate"></i> Certifications</span>
+          </div>
+        </div>
+
+        {/* Risk Flags Section */}
+        {riskFlags.length > 0 && (
+          <div className="agent-section-block">
+            <h5 className="section-subtitle text-rose">
+              <i className="ti ti-alert-triangle"></i> Discrepancy & Risk Flags ({riskFlags.length})
+            </h5>
+            <div className="risk-flags-list">
+              {riskFlags.map((risk, idx) => (
+                <div key={idx} className="risk-flag-item">
+                  <span className={`risk-severity-badge severity-${(risk.severity || 'medium').toLowerCase()}`}>
+                    {(risk.severity || 'MEDIUM').toUpperCase()}
+                  </span>
+                  <div className="risk-flag-content">
+                    <strong>{risk.type || risk.skill || risk.affected_skill || risk.affected_project || 'Discrepancy'}:</strong> {risk.description || risk.reasoning || risk.issue || risk.message}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Skills Verification Breakdown */}
+        <div className="agent-section-block">
+          <h5 className="section-subtitle"><i className="ti ti-list-check"></i> Skill Verification Breakdown</h5>
+          
+          {verifiedSkills.length > 0 && (
+            <div className="skill-group-block">
+              <span className="group-title text-emerald"><i className="ti ti-check"></i> Verified Skills ({verifiedSkills.length})</span>
+              <div className="recruiter-grid-list">
+                {verifiedSkills.map((s, idx) => {
+                  const skillName = typeof s === 'string' ? s : s.skill;
+                  const sources = typeof s === 'object' ? s.supporting_sources || s.sources || [] : [];
+                  const reasoning = typeof s === 'object' ? s.reasoning : null;
+                  return (
+                    <div key={idx} className="verified-item-card border-emerald">
+                      <div className="item-title-row">
+                        <span className="item-title">{skillName}</span>
+                        <span className="badge-small bg-emerald">Verified</span>
+                      </div>
+                      {sources.length > 0 && (
+                        <div className="tag-pills mt-4">
+                          {sources.map((src, i) => <span key={i} className="tag-pill tag-emerald-outline">{src}</span>)}
+                        </div>
+                      )}
+                      {reasoning && <p className="item-reasoning">{reasoning}</p>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {partiallyVerifiedSkills.length > 0 && (
+            <div className="skill-group-block">
+              <span className="group-title text-amber"><i className="ti ti-clock"></i> Partially Verified ({partiallyVerifiedSkills.length})</span>
+              <div className="recruiter-grid-list">
+                {partiallyVerifiedSkills.map((s, idx) => {
+                  const skillName = typeof s === 'string' ? s : s.skill;
+                  const reasoning = typeof s === 'object' ? s.reasoning : null;
+                  return (
+                    <div key={idx} className="verified-item-card border-amber">
+                      <div className="item-title-row">
+                        <span className="item-title">{skillName}</span>
+                        <span className="badge-small bg-amber">Partial Proof</span>
+                      </div>
+                      {reasoning && <p className="item-reasoning">{reasoning}</p>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {unverifiedSkills.length > 0 && (
+            <div className="skill-group-block">
+              <span className="group-title text-rose"><i className="ti ti-x"></i> Unverified / Claimed Only ({unverifiedSkills.length})</span>
+              <div className="recruiter-grid-list">
+                {unverifiedSkills.map((s, idx) => {
+                  const skillName = typeof s === 'string' ? s : s.skill;
+                  const reasoning = typeof s === 'object' ? s.reasoning : null;
+                  return (
+                    <div key={idx} className="verified-item-card border-rose">
+                      <div className="item-title-row">
+                        <span className="item-title">{skillName}</span>
+                        <span className="badge-small bg-rose">No Online Proof</span>
+                      </div>
+                      {reasoning && <p className="item-reasoning">{reasoning}</p>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Verified Projects */}
+        {verifiedProjects.length > 0 && (
+          <div className="agent-section-block">
+            <h5 className="section-subtitle"><i className="ti ti-folder"></i> Project Evidence & Status</h5>
+            <div className="recruiter-grid-list">
+              {verifiedProjects.map((p, idx) => (
+                <div key={idx} className="verified-item-card">
+                  <div className="item-title-row">
+                    <span className="item-title">{p.project_name || p.name}</span>
+                    <span className={`badge-small ${p.verification_status === 'verified' ? 'bg-emerald' : 'bg-amber'}`}>
+                      {p.verification_status || 'verified'}
+                    </span>
+                  </div>
+                  {(p.supporting_sources || p.sources) && (p.supporting_sources || p.sources).length > 0 && (
+                    <div className="tag-pills mt-4">
+                      {(p.supporting_sources || p.sources).map((src, i) => <span key={i} className="tag-pill tag-purple-outline">{src}</span>)}
+                    </div>
+                  )}
+                  {p.reasoning && <p className="item-reasoning">{p.reasoning}</p>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Structured Verification Audit Inspector */}
+        <details className="raw-json-details">
+          <summary><i className="ti ti-file-analytics"></i> View Structured Verification Audit Report & Audit Payload</summary>
+          <div className="report-inspector-body">
+            
+            {/* 1. Audit Metadata & Timestamps */}
+            <div className="inspector-header">
+              <div className="inspector-meta-row">
+                <span className="inspector-label"><i className="ti ti-user"></i> Candidate Name <span className="plain-key-label">{plainLanguageLabels.candidate_name}</span>:</span>
+                <span className="inspector-val">{data.candidate_name || 'Candidate Profile'}</span>
+              </div>
+              {data.timestamp && (
+                <div className="inspector-meta-row">
+                  <span className="inspector-label"><i className="ti ti-clock"></i> Timestamp <span className="plain-key-label">{plainLanguageLabels.timestamp}</span>:</span>
+                  <span className="inspector-val">{new Date(data.timestamp).toLocaleString()}</span>
+                </div>
+              )}
+            </div>
+
+            {/* 2. Credibility Metrics Breakdown with Plain Language Descriptions */}
+            {data.credibility_score && typeof data.credibility_score === 'object' && (
+              <div className="inspector-section">
+                <h6 className="inspector-subtitle"><i className="ti ti-chart-bar"></i> Credibility Correlation Breakdown</h6>
+                <div className="metrics-grid">
+                  <div className="metric-box">
+                    <span className="metric-value text-blue">{data.credibility_score.resume_consistency ?? '80'}%</span>
+                    <span className="metric-label">{plainLanguageLabels.resume_consistency}</span>
+                  </div>
+                  <div className="metric-box">
+                    <span className="metric-value text-emerald">{data.credibility_score.skill_verification ?? '0'}%</span>
+                    <span className="metric-label">{plainLanguageLabels.skill_verification}</span>
+                  </div>
+                  <div className="metric-box">
+                    <span className="metric-value text-purple">{data.credibility_score.project_verification ?? '0'}%</span>
+                    <span className="metric-label">{plainLanguageLabels.project_verification}</span>
+                  </div>
+                  <div className="metric-box">
+                    <span className="metric-value text-amber">{data.credibility_score.profile_evidence_strength ?? '0'}%</span>
+                    <span className="metric-label">{plainLanguageLabels.profile_evidence_strength}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 3. Comprehensive Skills Verification Matrix */}
+            <div className="inspector-section">
+              <h6 className="inspector-subtitle"><i className="ti ti-table"></i> Complete Skill Verification Matrix</h6>
+              <div className="recruiter-table-wrapper">
+                <table className="recruiter-data-table">
+                  <thead>
+                    <tr>
+                      <th>Skill Claim</th>
+                      <th>Status <span className="plain-key-label">{plainLanguageLabels.verification_status}</span></th>
+                      <th>Confidence <span className="plain-key-label">{plainLanguageLabels.confidence_score}</span></th>
+                      <th>Proof Sources <span className="plain-key-label">{plainLanguageLabels.supporting_sources}</span></th>
+                      <th>Finding Reasoning <span className="plain-key-label">{plainLanguageLabels.reasoning}</span></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...verifiedSkills, ...partiallyVerifiedSkills, ...unverifiedSkills].map((item, idx) => {
+                      const name = typeof item === 'string' ? item : item.skill;
+                      const status = typeof item === 'object' ? item.verification_status || 'unverified' : 'unverified';
+                      const conf = typeof item === 'object' ? item.confidence_score ?? 'N/A' : 'N/A';
+                      const sources = typeof item === 'object' ? (item.supporting_sources || item.sources || []).join(', ') || 'None' : 'None';
+                      const reason = typeof item === 'object' ? item.reasoning || '-' : '-';
+
+                      return (
+                        <tr key={idx}>
+                          <td className="font-semibold">{name}</td>
+                          <td>
+                            <span className={`status-pill status-${status}`}>
+                              {status.replace('_', ' ').toUpperCase()}
+                            </span>
+                          </td>
+                          <td>{conf !== 'N/A' ? `${conf}%` : 'N/A'}</td>
+                          <td>{sources}</td>
+                          <td className="text-muted">{reason}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* 4. Verified Projects Audit */}
+            {verifiedProjects.length > 0 && (
+              <div className="inspector-section">
+                <h6 className="inspector-subtitle"><i className="ti ti-folders"></i> Project Verification Audit</h6>
+                <div className="recruiter-table-wrapper">
+                  <table className="recruiter-data-table">
+                    <thead>
+                      <tr>
+                        <th>Project Claim</th>
+                        <th>Status <span className="plain-key-label">{plainLanguageLabels.verification_status}</span></th>
+                        <th>Confidence <span className="plain-key-label">{plainLanguageLabels.confidence_score}</span></th>
+                        <th>Proof Sources <span className="plain-key-label">{plainLanguageLabels.supporting_sources}</span></th>
+                        <th>Reasoning <span className="plain-key-label">{plainLanguageLabels.reasoning}</span></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {verifiedProjects.map((p, idx) => (
+                        <tr key={idx}>
+                          <td className="font-semibold">{p.project_name || p.name}</td>
+                          <td>
+                            <span className={`status-pill status-${p.verification_status || 'verified'}`}>
+                              {(p.verification_status || 'verified').replace('_', ' ').toUpperCase()}
+                            </span>
+                          </td>
+                          <td>{p.confidence_score !== undefined ? `${p.confidence_score}%` : 'N/A'}</td>
+                          <td>{(p.supporting_sources || p.sources || []).join(', ') || 'None'}</td>
+                          <td className="text-muted">{p.reasoning || '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* 5. Verified Certifications Audit */}
+            {verifiedCerts.length > 0 && (
+              <div className="inspector-section">
+                <h6 className="inspector-subtitle"><i className="ti ti-certificate"></i> Certification Verification Audit</h6>
+                <div className="recruiter-table-wrapper">
+                  <table className="recruiter-data-table">
+                    <thead>
+                      <tr>
+                        <th>Certification Claim</th>
+                        <th>Status <span className="plain-key-label">{plainLanguageLabels.verification_status}</span></th>
+                        <th>Confidence <span className="plain-key-label">{plainLanguageLabels.confidence_score}</span></th>
+                        <th>Sources</th>
+                        <th>Reasoning <span className="plain-key-label">{plainLanguageLabels.reasoning}</span></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {verifiedCerts.map((c, idx) => (
+                        <tr key={idx}>
+                          <td className="font-semibold">{c.certification || c.name || c}</td>
+                          <td>
+                            <span className={`status-pill status-${c.verification_status || 'partially_verified'}`}>
+                              {(c.verification_status || 'partially_verified').replace('_', ' ').toUpperCase()}
+                            </span>
+                          </td>
+                          <td>{c.confidence_score !== undefined ? `${c.confidence_score}%` : '30%'}</td>
+                          <td>{(c.supporting_sources || ['resume']).join(', ')}</td>
+                          <td className="text-muted">{c.reasoning || '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* 6. Formatted Audit File Payload Structure Tree (Replaces raw JSON syntax view) */}
+            <details className="nested-raw-json mt-16">
+              <summary><i className="ti ti-sitemap"></i> View Audit File Data Structure Tree (Structured Visual Property Tree)</summary>
+              <StructuredPayloadGrid payload={data} />
+            </details>
+          </div>
+        </details>
+      </div>
+    );
+  };
+
+  const renderAgent3Output = (data) => {
+    if (!data) return null;
+    const strengthScore = data.candidate_strength_score ?? 0;
+    const summaryText = data.recruiter_summary || '';
+    const hiddenSkills = data.hidden_skills || [];
+    const aiUsage = data.ai_usage_estimation || {};
+    const topStrengths = data.top_strengths || [];
+    const domainExpertise = data.domain_expertise || [];
+    const recommendedRoles = data.recommended_roles || [];
+
+    return (
+      <div className="agent-result-card">
+        <div className="agent-card-header">
+          <div className="agent-title-group">
+            <i className="ti ti-bulb agent-icon icon-amber"></i>
+            <div>
+              <h4 className="agent-name">Agent 3: Hidden Skill Discovery</h4>
+              <p className="agent-subtitle">Discovers unlisted competencies, domain focus, and AI assistance metrics</p>
+            </div>
+          </div>
+          <div className={`score-badge ${strengthScore >= 75 ? 'score-high' : strengthScore >= 50 ? 'score-mid' : 'score-low'}`}>
+            <span className="score-num">{strengthScore}%</span>
+            <span className="score-label">Strength Score</span>
+          </div>
+        </div>
+
+        {/* Recruiter Summary Pitch */}
+        {summaryText && (
+          <div className="recruiter-pitch-banner">
+            <i className="ti ti-file-text pitch-icon"></i>
+            <div>
+              <span className="pitch-heading">Recruiter Insights Summary</span>
+              <p className="pitch-text">{summaryText}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Hidden Skills Grid */}
+        {hiddenSkills.length > 0 && (
+          <div className="agent-section-block">
+            <h5 className="section-subtitle"><i className="ti ti-sparkles"></i> Discovered & Inferred Hidden Skills ({hiddenSkills.length})</h5>
+            <div className="hidden-skills-grid">
+              {hiddenSkills.map((hs, idx) => (
+                <div key={idx} className="hidden-skill-card">
+                  <div className="hidden-skill-header">
+                    <span className="hidden-skill-name">{hs.skill}</span>
+                    {hs.confidence && <span className="tag-pill tag-purple-outline">Conf: {hs.confidence}</span>}
+                  </div>
+                  {hs.category && <span className="badge-category">{hs.category}</span>}
+                  {hs.evidence && <p className="hidden-skill-evidence"><i className="ti ti-search"></i> {hs.evidence}</p>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* AI Usage & Domain Expertise Grid */}
+        <div className="two-col-grid">
+          {/* AI Usage Card */}
+          <div className="info-card">
+            <h5 className="info-card-title"><i className="ti ti-robot"></i> AI Assistance Estimation</h5>
+            <div className="ai-level-badge">
+              <span className="label">Estimated AI Reliance:</span>
+              <span className="value">{aiUsage.ai_assistance_level || 'Low / Authentic'}</span>
+            </div>
+            {aiUsage.reasoning && <p className="info-card-desc">{aiUsage.reasoning}</p>}
+          </div>
+
+          {/* Strengths & Expertise */}
+          <div className="info-card">
+            <h5 className="info-card-title"><i className="ti ti-trending-up"></i> Top Strengths & Expertise</h5>
+            {topStrengths.length > 0 && (
+              <div className="tag-pills mb-8">
+                {topStrengths.map((st, i) => <span key={i} className="tag-pill tag-emerald">{st}</span>)}
+              </div>
+            )}
+            {domainExpertise.length > 0 && (
+              <div>
+                <span className="sublabel">Domains:</span>
+                <div className="tag-pills mt-4">
+                  {domainExpertise.map((de, i) => <span key={i} className="tag-pill tag-blue">{typeof de === 'string' ? de : de.domain}</span>)}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Recommended Roles */}
+        {recommendedRoles.length > 0 && (
+          <div className="agent-section-block">
+            <h5 className="section-subtitle"><i className="ti ti-briefcase"></i> Inferred Target Roles</h5>
+            <div className="tag-pills">
+              {recommendedRoles.map((r, i) => (
+                <span key={i} className="tag-pill tag-indigo-lg">
+                  <i className="ti ti-check"></i> {typeof r === 'string' ? r : `${r.role || r.role_title} (${r.match_percentage || r.match_score || 90}%)`}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Formatted Agent 3 Output Data Structure Tree */}
+        <details className="raw-json-details">
+          <summary><i className="ti ti-sitemap"></i> View Agent 3 Output Data Structure Tree</summary>
+          <StructuredPayloadGrid payload={data} />
+        </details>
+      </div>
+    );
+  };
+
+  const renderAgent4Output = (data) => {
+    if (!data) return null;
+    const candidateName = data.candidate_name || name || 'Candidate';
+    const strengthScore = data.overall_strength_score ?? 0;
+    const recruiterAction = data.recruiter_action || 'Add to talent pool';
+    const archetype = data.candidate_archetype || 'Software Engineer';
+    const careerStage = data.career_stage || 'Professional';
+    const pitch = data.one_line_pitch || '';
+    const domainFit = data.domain_best_fit || '';
+    const topRoles = data.top_recommended_roles || [];
+
+    const getActionBadgeClass = (act) => {
+      const a = (act || '').toLowerCase();
+      if (a.includes('fast-track') || a.includes('interview')) return 'action-fast-track';
+      if (a.includes('talent pool')) return 'action-pool';
+      return 'action-revisit';
+    };
+
+    return (
+      <div className="agent-result-card border-accent-glow">
+        <div className="agent-card-header">
+          <div className="agent-title-group">
+            <i className="ti ti-target-arrow agent-icon icon-purple"></i>
+            <div>
+              <h4 className="agent-name">Agent 4: Best Role Finder & Recommendation Engine</h4>
+              <p className="agent-subtitle">Matches candidate profile against industry roles and generates actionable recruiter recommendations</p>
+            </div>
+          </div>
+          <div className={`score-badge ${strengthScore >= 75 ? 'score-high' : strengthScore >= 50 ? 'score-mid' : 'score-low'}`}>
+            <span className="score-num">{strengthScore}%</span>
+            <span className="score-label">Overall Match</span>
+          </div>
+        </div>
+
+        {/* Candidate Profile Meta Banner */}
+        <div className="archetype-banner">
+          <div className="archetype-info">
+            <span className="archetype-title">{candidateName}</span>
+            <div className="meta-pills">
+              <span className="tag-pill tag-purple-filled"><i className="ti ti-user-check"></i> {archetype}</span>
+              <span className="tag-pill tag-neutral"><i className="ti ti-chart-dots"></i> {careerStage}</span>
+              {domainFit && <span className="tag-pill tag-blue"><i className="ti ti-world"></i> {domainFit}</span>}
+            </div>
+          </div>
+          <div className={`recruiter-action-pill ${getActionBadgeClass(recruiterAction)}`}>
+            <i className="ti ti-player-play-filled"></i> {recruiterAction}
+          </div>
+        </div>
+
+        {/* Pitch Banner */}
+        {pitch && (
+          <div className="one-line-pitch-card">
+            <i className="ti ti-quote pitch-quote-icon"></i>
+            <p className="pitch-body">"{pitch}"</p>
+          </div>
+        )}
+
+        {/* Top 3 Recommended Roles */}
+        {topRoles.length > 0 && (
+          <div className="agent-section-block">
+            <h5 className="section-subtitle"><i className="ti ti-award"></i> Top Recommended Roles for Hiring</h5>
+            <div className="recommended-roles-grid">
+              {topRoles.map((role, idx) => (
+                <div key={idx} className="role-recommendation-card">
+                  <div className="role-card-header">
+                    <span className="role-rank-badge">#{role.rank || idx + 1}</span>
+                    <div className="role-title-box">
+                      <h6 className="role-title">{role.role_title || role.title}</h6>
+                      <span className="match-score-text">{role.match_score || role.score || 90}% Match</span>
+                    </div>
+                  </div>
+
+                  {/* Why This Role */}
+                  {role.why_this_role && (
+                    <div className="role-section-box">
+                      <span className="box-label"><i className="ti ti-help-circle"></i> Why This Role:</span>
+                      <p className="box-text">{role.why_this_role}</p>
+                    </div>
+                  )}
+
+                  {/* Supporting Evidence List */}
+                  {role.supporting_evidence && role.supporting_evidence.length > 0 && (
+                    <div className="role-section-box">
+                      <span className="box-label"><i className="ti ti-list-check"></i> Supporting Evidence:</span>
+                      <ul className="recruiter-bullet-list">
+                        {role.supporting_evidence.map((ev, i) => <li key={i}>{ev}</li>)}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Growth Path */}
+                  {role.growth_path && (
+                    <div className="role-section-box border-top-dashed">
+                      <span className="box-label text-indigo"><i className="ti ti-trending-up"></i> Growth Path:</span>
+                      <p className="box-text text-indigo">{role.growth_path}</p>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Formatted Agent 4 Output Data Structure Tree */}
+        <details className="raw-json-details">
+          <summary><i className="ti ti-sitemap"></i> View Agent 4 Output Data Structure Tree</summary>
+          <StructuredPayloadGrid payload={data} />
+        </details>
+      </div>
+    );
+  };
+
+  const renderAgent5Output = (data) => {
+    if (!data) return null;
+    const score = data.overall_authenticity_score ?? 0;
+    const verdict = data.verdict || 'Authentic';
+    const verdictLevel = data.verdict_level || 'Mostly Authentic';
+    const projects = data.projects || [];
+    const conflicts = data.cross_agent_conflicts || [];
+    const skillClaimAcc = data.skill_claim_accuracy ?? 80;
+    const consistencyScore = data.profile_consistency_score ?? 85;
+    const recAlert = data.recruiter_alert || '';
+    const recSummary = data.recruiter_summary || '';
+
+    return (
+      <div className="agent-result-card border-accent-glow">
+        <div className="agent-card-header">
+          <div className="agent-title-group">
+            <i className="ti ti-shield-lock agent-icon icon-emerald"></i>
+            <div>
+              <h4 className="agent-name">Agent 5: Project Authenticity System</h4>
+              <p className="agent-subtitle">Cross-verifies claims, detects AI involvement, and evaluates project commit proof</p>
+            </div>
+          </div>
+          <div className={`score-badge ${score >= 75 ? 'score-high' : score >= 50 ? 'score-mid' : 'score-low'}`}>
+            <span className="score-num">{score}%</span>
+            <span className="score-label">{verdictLevel}</span>
+          </div>
+        </div>
+
+        {/* Executive Summary Pitch */}
+        {recSummary && (
+          <div className="recruiter-pitch-banner">
+            <i className="ti ti-checkup-list pitch-icon"></i>
+            <div>
+              <span className="pitch-heading">Authenticity Verdict: {verdict}</span>
+              <p className="pitch-text">{recSummary}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Metrics Grid */}
+        <div className="metrics-grid">
+          <div className="metric-box">
+            <span className="metric-value text-emerald">{score}%</span>
+            <span className="metric-label"><i className="ti ti-shield-check"></i> Overall Authenticity</span>
+          </div>
+          <div className="metric-box">
+            <span className="metric-value text-indigo">{skillClaimAcc}%</span>
+            <span className="metric-label"><i className="ti ti-target"></i> Skill Accuracy</span>
+          </div>
+          <div className="metric-box">
+            <span className="metric-value text-purple">{consistencyScore}%</span>
+            <span className="metric-label"><i className="ti ti-scale"></i> Consistency Score</span>
+          </div>
+        </div>
+
+        {/* Recruiter Alert Banner */}
+        {recAlert && (
+          <div className="risk-flag-item mb-16">
+            <span className="risk-severity-badge severity-high">RECRUITER ALERT</span>
+            <div className="risk-flag-content">{recAlert}</div>
+          </div>
+        )}
+
+        {/* Cross-Agent Conflicts */}
+        {conflicts.length > 0 && (
+          <div className="agent-section-block">
+            <h5 className="section-subtitle text-rose">
+              <i className="ti ti-alert-triangle"></i> Cross-Agent Discrepancies & Conflicts ({conflicts.length})
+            </h5>
+            <div className="risk-flags-list">
+              {conflicts.map((conf, idx) => (
+                <div key={idx} className="risk-flag-item">
+                  <span className={`risk-severity-badge severity-${(conf.severity || 'medium').toLowerCase()}`}>
+                    {(conf.severity || 'MEDIUM').toUpperCase()}
+                  </span>
+                  <div className="risk-flag-content">
+                    <strong>{conf.conflict_type}:</strong> {conf.description} <em>({conf.agent_a} vs {conf.agent_b})</em>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Projects Breakdown */}
+        {projects.length > 0 && (
+          <div className="agent-section-block">
+            <h5 className="section-subtitle"><i className="ti ti-folder-check"></i> Project Authenticity Breakdown</h5>
+            <div className="recommended-roles-grid">
+              {projects.map((p, idx) => (
+                <div key={idx} className="role-recommendation-card">
+                  <div className="role-card-header">
+                    <div className="role-title-box">
+                      <h6 className="role-title">{p.project_name}</h6>
+                      <span className="match-score-text">{p.final_verdict} ({p.authenticity_score}% Score)</span>
+                    </div>
+                  </div>
+
+                  <div className="tag-pills">
+                    <span className="tag-pill tag-purple">AI Level: {p.ai_assistance_level}</span>
+                    <span className="tag-pill tag-neutral">Complexity: {p.complexity_match}</span>
+                    <span className="tag-pill tag-emerald">Impact: {p.impact_score}/100</span>
+                  </div>
+
+                  {p.commit_evidence && (
+                    <div className="role-section-box">
+                      <span className="box-label"><i className="ti ti-git-commit"></i> Commit Evidence:</span>
+                      <p className="box-text">{p.commit_evidence}</p>
+                    </div>
+                  )}
+
+                  {p.green_flags && p.green_flags.length > 0 && (
+                    <div className="tag-pills mt-4">
+                      {p.green_flags.map((flag, i) => (
+                        <span key={i} className="tag-pill tag-emerald-outline"><i className="ti ti-check"></i> {flag}</span>
+                      ))}
+                    </div>
+                  )}
+
+                  {p.red_flags && p.red_flags.length > 0 && (
+                    <div className="tag-pills mt-4">
+                      {p.red_flags.map((flag, i) => (
+                        <span key={i} className="tag-pill tag-rose"><i className="ti ti-x"></i> {flag}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Formatted Agent 5 Output Data Structure Tree */}
+        <details className="raw-json-details">
+          <summary><i className="ti ti-sitemap"></i> View Agent 5 Output Data Structure Tree</summary>
+          <StructuredPayloadGrid payload={data} />
+        </details>
+      </div>
+    );
+  };
+
+  const renderAgent6Output = (data) => {
+    if (!data) return null;
+    const score = data.overall_technical_depth_score ?? 0;
+    const skillsAssessed = data.skills_assessed || [];
+    const strongest = data.strongest_technical_areas || [];
+    const weakest = data.weakest_technical_areas || [];
+    const pss = data.problem_solving_summary || {};
+    const ir = data.interview_recommendation || {};
+    const recSummary = data.recruiter_summary || '';
+
+    return (
+      <div className="agent-result-card border-accent-glow">
+        <div className="agent-card-header">
+          <div className="agent-title-group">
+            <i className="ti ti-code-circle agent-icon icon-indigo"></i>
+            <div>
+              <h4 className="agent-name">Agent 6: Technical Depth Assessment</h4>
+              <p className="agent-subtitle">Evaluates real problem-solving evidence from LeetCode & HackerRank versus resume claims</p>
+            </div>
+          </div>
+          <div className={`score-badge ${score >= 75 ? 'score-high' : score >= 50 ? 'score-mid' : 'score-low'}`}>
+            <span className="score-num">{score}%</span>
+            <span className="score-label">Tech Depth</span>
+          </div>
+        </div>
+
+        {/* Summary Pitch */}
+        {recSummary && (
+          <div className="recruiter-pitch-banner">
+            <i className="ti ti-brand-vscode pitch-icon"></i>
+            <div>
+              <span className="pitch-heading">Recruiter Technical Assessment</span>
+              <p className="pitch-text">{recSummary}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Problem Solving Metrics */}
+        <div className="metrics-grid">
+          <div className="metric-box">
+            <span className="metric-value text-indigo">{pss.total_problems_solved ?? 0}</span>
+            <span className="metric-label"><i className="ti ti-check"></i> Total Solved</span>
+          </div>
+          <div className="metric-box">
+            <span className="metric-value text-purple">{pss.consistency_rating || 'N/A'}</span>
+            <span className="metric-label"><i className="ti ti-chart-histogram"></i> Consistency</span>
+          </div>
+          <div className="metric-box">
+            <span className="metric-value text-emerald">{score}%</span>
+            <span className="metric-label"><i className="ti ti-award"></i> Depth Index</span>
+          </div>
+        </div>
+
+        {/* Strongest vs Weakest Grid */}
+        {(strongest.length > 0 || weakest.length > 0) && (
+          <div className="two-col-grid">
+            {strongest.length > 0 && (
+              <div className="info-card">
+                <h5 className="info-card-title text-emerald"><i className="ti ti-trending-up"></i> Strongest Technical Areas</h5>
+                <div className="tag-pills">
+                  {strongest.map((s, i) => <span key={i} className="tag-pill tag-emerald">{s}</span>)}
+                </div>
+              </div>
+            )}
+
+            {weakest.length > 0 && (
+              <div className="info-card">
+                <h5 className="info-card-title text-rose"><i className="ti ti-trending-down"></i> Weakest / Unverified Areas</h5>
+                <div className="tag-pills">
+                  {weakest.map((w, i) => <span key={i} className="tag-pill tag-rose">{w}</span>)}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Interview Recommendations */}
+        {ir && (
+          <div className="agent-section-block">
+            <h5 className="section-subtitle"><i className="ti ti-chalkboard"></i> Interview Recommendation Strategy</h5>
+            <div className="one-line-pitch-card">
+              <i className="ti ti-user-check pitch-quote-icon"></i>
+              <div>
+                <span className="box-label text-purple">Suggested Round: {ir.suggested_round_type || 'Technical Coding'}</span>
+                {ir.topics_to_test && ir.topics_to_test.length > 0 && (
+                  <div className="mt-4">
+                    <strong className="text-emerald">Topics to Test:</strong> {ir.topics_to_test.join(', ')}
+                  </div>
+                )}
+                {ir.topics_to_avoid_assuming && ir.topics_to_avoid_assuming.length > 0 && (
+                  <div className="mt-4">
+                    <strong className="text-rose">Avoid Assuming:</strong> {ir.topics_to_avoid_assuming.join(', ')}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Skills Assessed List */}
+        {skillsAssessed.length > 0 && (
+          <div className="agent-section-block">
+            <h5 className="section-subtitle"><i className="ti ti-list-check"></i> Per-Skill Depth & Gap Analysis ({skillsAssessed.length})</h5>
+            <div className="recruiter-grid-list">
+              {skillsAssessed.map((sk, idx) => (
+                <div key={idx} className={`verified-item-card ${sk.level_gap_detected ? 'border-rose' : 'border-emerald'}`}>
+                  <div className="item-title-row">
+                    <span className="item-title">{sk.skill}</span>
+                    <span className={`badge-small ${sk.level_gap_detected ? 'bg-rose' : 'bg-emerald'}`}>
+                      {sk.interview_readiness || 'Ready'}
+                    </span>
+                  </div>
+
+                  <div className="tag-pills mt-4">
+                    <span className="tag-pill tag-neutral">Claimed: {sk.claimed_level}</span>
+                    <span className={`tag-pill ${sk.level_gap_detected ? 'tag-rose' : 'tag-emerald'}`}>
+                      Evidenced: {sk.evidenced_level}
+                    </span>
+                  </div>
+
+                  {sk.level_gap_detected && sk.gap_explanation && (
+                    <p className="item-reasoning text-rose"><i className="ti ti-alert-circle"></i> {sk.gap_explanation}</p>
+                  )}
+
+                  {sk.recommended_interview_focus && (
+                    <p className="item-reasoning"><strong>Focus:</strong> {sk.recommended_interview_focus}</p>
+                  )}
+
+                  {sk.problem_solving_evidence && (
+                    <details className="raw-json-details">
+                      <summary>Platform Evidence ({sk.problem_solving_evidence.platform || 'Platform'})</summary>
+                      <div className="item-reasoning mt-4">
+                        <span>Easy: {sk.problem_solving_evidence.easy_solved ?? 0}</span> | 
+                        <span> Medium: {sk.problem_solving_evidence.medium_solved ?? 0}</span> | 
+                        <span> Hard: {sk.problem_solving_evidence.hard_solved ?? 0}</span>
+                      </div>
+                    </details>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Formatted Agent 6 Output Data Structure Tree */}
+        <details className="raw-json-details">
+          <summary><i className="ti ti-sitemap"></i> View Agent 6 Output Data Structure Tree</summary>
+          <StructuredPayloadGrid payload={data} />
+        </details>
+      </div>
+    );
+  };
+
   return (
     <div className="app">
       <div className="agent-badge">Agent 1 · Resume Parser</div>
       
       {!enrichedProfile ? (
         <div className="upload-section">
-          <h1>Resume Parser</h1>
-          <p className="subtitle">Upload your resume and fill in your details</p>
-          
-          {/* User Details */}
-          <div className="form-group">
-            <label className="form-label">Full Name <span className="required">*</span></label>
-            <input
-              type="text"
-              className="form-input"
-              placeholder="John Doe"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              disabled={isProcessing}
-            />
+          <div className="form-header">
+            <h1>Resume Parser</h1>
+            <p className="subtitle">Upload your resume and fill in your details to generate an enriched profile</p>
           </div>
 
-          <div className="form-group">
-            <label className="form-label">Email Address <span className="required">*</span></label>
-            <input
-              type="email"
-              className="form-input"
-              placeholder="john@example.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              disabled={isProcessing}
-            />
-          </div>
-          
-          {/* Resume Upload */}
-          <div className="form-group">
-            <label className="form-label">Upload Resume <span className="required">*</span></label>
-            <div
-              className={`upload-zone ${isProcessing ? 'processing' : ''}`}
-              onDragOver={handleDragOver}
-              onDrop={handleDrop}
-              onClick={() => !isProcessing && fileInputRef.current?.click()}
-            >
-              <input
-                type="file"
-                ref={fileInputRef}
-                accept=".pdf,.png,.jpg,.jpeg"
-                onChange={handleFileSelect}
-                style={{ display: 'none' }}
-              />
-              <i className="ti ti-upload"></i>
-              <p>Drag and drop your resume here, or click to browse</p>
-              <span className="file-types">PDF, PNG, JPG</span>
-            </div>
-          </div>
-
-          {file && (
-            <div className="file-info">
-              <i className="ti ti-file"></i>
-              <div>
-                <div className="file-name">{file.name}</div>
-                <div className="file-size">{(file.size / 1024).toFixed(1)} KB</div>
+          <form onSubmit={(e) => { e.preventDefault(); handleProcess(); }} noValidate className="resume-form">
+            {/* User Details Grid */}
+            <div className="form-grid">
+              <div className="form-group">
+                <label htmlFor="fullName" className="form-label">
+                  Full Name <span className="required" aria-hidden="true">*</span>
+                </label>
+                <div className="input-wrapper">
+                  <i className="ti ti-user input-icon" aria-hidden="true"></i>
+                  <input
+                    id="fullName"
+                    type="text"
+                    className={`form-input ${errors.name && touched.name ? 'input-error' : ''}`}
+                    placeholder="e.g. Alex Morgan"
+                    value={name}
+                    onChange={(e) => {
+                      setName(e.target.value);
+                      if (errors.name) setErrors(prev => ({ ...prev, name: null }));
+                    }}
+                    onBlur={() => handleBlur('name')}
+                    disabled={isProcessing}
+                    aria-required="true"
+                    aria-invalid={!!(errors.name && touched.name)}
+                    aria-describedby={errors.name && touched.name ? "name-error" : undefined}
+                  />
+                </div>
+                {errors.name && touched.name && (
+                  <span id="name-error" className="error-message" role="alert">
+                    <i className="ti ti-alert-circle" aria-hidden="true"></i> {errors.name}
+                  </span>
+                )}
               </div>
-              <button
-                className="remove-btn"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setFile(null);
-                }}
-              >
-                <i className="ti ti-x"></i>
-              </button>
-            </div>
-          )}
 
-          {/* Pre-populated URLs */}
-          <div className="form-group">
-            <label className="form-label">Links</label>
+              <div className="form-group">
+                <label htmlFor="emailAddress" className="form-label">
+                  Email Address <span className="required" aria-hidden="true">*</span>
+                </label>
+                <div className="input-wrapper">
+                  <i className="ti ti-mail input-icon" aria-hidden="true"></i>
+                  <input
+                    id="emailAddress"
+                    type="email"
+                    className={`form-input ${errors.email && touched.email ? 'input-error' : ''}`}
+                    placeholder="e.g. alex@example.com"
+                    value={email}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      if (errors.email) setErrors(prev => ({ ...prev, email: null }));
+                    }}
+                    onBlur={() => handleBlur('email')}
+                    disabled={isProcessing}
+                    aria-required="true"
+                    aria-invalid={!!(errors.email && touched.email)}
+                    aria-describedby={errors.email && touched.email ? "email-error" : undefined}
+                  />
+                </div>
+                {errors.email && touched.email && (
+                  <span id="email-error" className="error-message" role="alert">
+                    <i className="ti ti-alert-circle" aria-hidden="true"></i> {errors.email}
+                  </span>
+                )}
+              </div>
+            </div>
             
-            <div className="url-input-row">
-              <i className="ti ti-brand-github url-icon"></i>
-              <input
-                type="url"
-                className="url-input"
-                placeholder="https://github.com/yourusername"
-                value={githubUrl}
-                onChange={(e) => setGithubUrl(e.target.value)}
-                disabled={isProcessing}
-              />
-            </div>
+            {/* Resume Upload */}
+            <div className="form-group">
+              <label htmlFor="resumeFileInput" className="form-label">
+                Upload Resume <span className="required" aria-hidden="true">*</span>
+              </label>
 
-            <div className="url-input-row">
-              <i className="ti ti-brand-linkedin url-icon"></i>
-              <input
-                type="url"
-                className="url-input"
-                placeholder="https://linkedin.com/in/yourusername"
-                value={linkedinUrl}
-                onChange={(e) => setLinkedinUrl(e.target.value)}
-                disabled={isProcessing}
-              />
-            </div>
-
-            <div className="url-input-row">
-              <i className="ti ti-world url-icon"></i>
-              <input
-                type="url"
-                className="url-input"
-                placeholder="https://yourportfolio.com"
-                value={portfolioUrl}
-                onChange={(e) => setPortfolioUrl(e.target.value)}
-                disabled={isProcessing}
-              />
-            </div>
-
-            {/* Custom URLs */}
-            {customUrls.map((cu) => (
-              <div key={cu.id} className="custom-url-row">
-                <input
-                  type="text"
-                  className="form-input custom-url-name"
-                  placeholder="URL name (e.g. Blog)"
-                  value={cu.name}
-                  onChange={(e) => updateCustomUrl(cu.id, 'name', e.target.value)}
-                  disabled={isProcessing}
-                />
-                <input
-                  type="url"
-                  className="form-input custom-url-link"
-                  placeholder="https://..."
-                  value={cu.url}
-                  onChange={(e) => updateCustomUrl(cu.id, 'url', e.target.value)}
-                  disabled={isProcessing}
-                />
-                <button
-                  className="remove-url-btn"
-                  onClick={() => removeCustomUrl(cu.id)}
-                  disabled={isProcessing}
+              {!file ? (
+                <div
+                  className={`upload-zone ${isDraggingOver ? 'dragging' : ''} ${errors.file && touched.file ? 'upload-zone-error' : ''} ${isProcessing ? 'processing' : ''}`}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  onClick={() => !isProcessing && fileInputRef.current?.click()}
+                  onKeyDown={(e) => {
+                    if ((e.key === 'Enter' || e.key === ' ') && !isProcessing) {
+                      e.preventDefault();
+                      fileInputRef.current?.click();
+                    }
+                  }}
+                  tabIndex={isProcessing ? -1 : 0}
+                  role="button"
+                  aria-label="Upload resume file dropzone"
                 >
-                  <i className="ti ti-x"></i>
-                </button>
+                  <input
+                    id="resumeFileInput"
+                    type="file"
+                    ref={fileInputRef}
+                    accept=".pdf,.png,.jpg,.jpeg"
+                    onChange={handleFileSelect}
+                    style={{ display: 'none' }}
+                    disabled={isProcessing}
+                  />
+                  <div className="upload-icon-wrapper">
+                    <i className={`ti ${isDraggingOver ? 'ti-cloud-upload' : 'ti-file-upload'}`}></i>
+                  </div>
+                  <div className="upload-text-group">
+                    <p className="upload-title">
+                      {isDraggingOver ? 'Drop your resume here' : 'Drag & drop your resume here, or click to browse'}
+                    </p>
+                    <span className="file-types">Supports PDF, PNG, JPG (Max 10MB)</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="selected-file-card">
+                  <div className="file-icon-badge">
+                    <i className={`ti ${getFileIcon(file)}`}></i>
+                  </div>
+                  <div className="file-details">
+                    <div className="file-header-row">
+                      <span className="file-name">{file.name}</span>
+                      <span className="file-status-badge">
+                        <i className="ti ti-circle-check"></i> Ready
+                      </span>
+                    </div>
+                    <div className="file-meta">
+                      <span className="file-size">{formatFileSize(file.size)}</span>
+                      <span className="file-dot">•</span>
+                      <span className="file-extension">{(file.name.split('.').pop() || '').toUpperCase()}</span>
+                    </div>
+                  </div>
+                  <div className="file-actions">
+                    <button
+                      type="button"
+                      className="btn-action-secondary"
+                      onClick={() => !isProcessing && fileInputRef.current?.click()}
+                      disabled={isProcessing}
+                      title="Replace resume file"
+                      aria-label="Replace resume file"
+                    >
+                      <i className="ti ti-refresh"></i> Replace
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-action-danger"
+                      onClick={() => {
+                        if (!isProcessing) {
+                          setFile(null);
+                          if (fileInputRef.current) fileInputRef.current.value = '';
+                          handleBlur('file');
+                        }
+                      }}
+                      disabled={isProcessing}
+                      title="Remove file"
+                      aria-label="Remove file"
+                    >
+                      <i className="ti ti-trash"></i>
+                    </button>
+                    <input
+                      id="resumeFileInput"
+                      type="file"
+                      ref={fileInputRef}
+                      accept=".pdf,.png,.jpg,.jpeg"
+                      onChange={handleFileSelect}
+                      style={{ display: 'none' }}
+                      disabled={isProcessing}
+                    />
+                  </div>
+                </div>
+              )}
+              {errors.file && touched.file && (
+                <span id="resume-error" className="error-message" role="alert">
+                  <i className="ti ti-alert-circle" aria-hidden="true"></i> {errors.file}
+                </span>
+              )}
+            </div>
+
+            {/* Pre-populated & Custom URLs */}
+            <div className="form-group links-group">
+              <div className="links-header">
+                <label className="form-label mb-0">Links & Profiles</label>
+                <span className="optional-badge">Optional</span>
               </div>
-            ))}
+              
+              <div className="url-inputs-list">
+                <div className="url-input-row">
+                  <div className="url-icon-badge">
+                    <i className="ti ti-brand-github url-icon"></i>
+                  </div>
+                  <input
+                    type="url"
+                    className="url-input"
+                    placeholder="https://github.com/yourusername"
+                    value={githubUrl}
+                    onChange={(e) => setGithubUrl(e.target.value)}
+                    disabled={isProcessing}
+                    aria-label="GitHub URL"
+                  />
+                </div>
 
-            <button
-              className="add-url-btn"
-              onClick={addCustomUrl}
-              disabled={isProcessing}
-            >
-              <i className="ti ti-plus"></i> Add More URLs
-            </button>
-          </div>
+                <div className="url-input-row">
+                  <div className="url-icon-badge">
+                    <i className="ti ti-brand-linkedin url-icon"></i>
+                  </div>
+                  <input
+                    type="url"
+                    className="url-input"
+                    placeholder="https://linkedin.com/in/yourusername"
+                    value={linkedinUrl}
+                    onChange={(e) => setLinkedinUrl(e.target.value)}
+                    disabled={isProcessing}
+                    aria-label="LinkedIn URL"
+                  />
+                </div>
 
-          {/* Buttons */}
-          <div className="button-group">
-            {!isProcessing && (
-              <button className="process-btn" onClick={handleProcess}>
-                <i className="ti ti-player-play" style={{ marginRight: '8px' }}></i>
-                Parse Resume
+                <div className="url-input-row">
+                  <div className="url-icon-badge">
+                    <i className="ti ti-world url-icon"></i>
+                  </div>
+                  <input
+                    type="url"
+                    className="url-input"
+                    placeholder="https://yourportfolio.com"
+                    value={portfolioUrl}
+                    onChange={(e) => setPortfolioUrl(e.target.value)}
+                    disabled={isProcessing}
+                    aria-label="Portfolio URL"
+                  />
+                </div>
+
+                {/* Custom URLs with animation */}
+                {customUrls.map((cu) => (
+                  <div key={cu.id} className="custom-url-row custom-url-row-enter">
+                    <input
+                      type="text"
+                      className="form-input custom-url-name"
+                      placeholder="Label (e.g. Portfolio / Blog)"
+                      value={cu.name}
+                      onChange={(e) => updateCustomUrl(cu.id, 'name', e.target.value)}
+                      disabled={isProcessing}
+                      aria-label="Custom Link Label"
+                    />
+                    <input
+                      type="url"
+                      className="form-input custom-url-link"
+                      placeholder="https://..."
+                      value={cu.url}
+                      onChange={(e) => updateCustomUrl(cu.id, 'url', e.target.value)}
+                      disabled={isProcessing}
+                      aria-label="Custom Link URL"
+                    />
+                    <button
+                      type="button"
+                      className="remove-url-btn"
+                      onClick={() => removeCustomUrl(cu.id)}
+                      disabled={isProcessing}
+                      title="Remove URL"
+                      aria-label="Remove URL"
+                    >
+                      <i className="ti ti-trash"></i>
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                className="add-url-btn"
+                onClick={addCustomUrl}
+                disabled={isProcessing}
+              >
+                <i className="ti ti-plus"></i>
+                <span>Add More URLs</span>
               </button>
-            )}
-          </div>
+            </div>
+
+            {/* Submit Button Group */}
+            <div className="button-group">
+              <button 
+                type="submit" 
+                className={`process-btn ${isProcessing ? 'loading' : ''}`} 
+                disabled={isProcessing}
+              >
+                {isProcessing ? (
+                  <>
+                    <i className="ti ti-loader-2 spinner-icon"></i>
+                    <span>Parsing Resume...</span>
+                  </>
+                ) : (
+                  <>
+                    <i className="ti ti-player-play btn-icon"></i>
+                    <span>Parse Resume</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
 
           {isProcessing && (
             <div className="steps-tracker">
@@ -1066,72 +2681,7 @@ function App() {
             <h3 className="section-header"><i className="ti ti-link"></i> URL Results</h3>
             {processedUrls.length > 0 ? (
               <div className="urls-list">
-                {processedUrls.map((item, i) => (
-                  <div key={i} className="url-item-card" style={{
-                    border: '1px solid var(--border-color)',
-                    borderRadius: '8px',
-                    padding: '16px',
-                    marginBottom: '12px',
-                    background: item.accessible ? '#f0fff4' : '#fff0f0'
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
-                      {item.accessible ? (
-                        <i className="ti ti-check" style={{ color: 'var(--success)' }}></i>
-                      ) : (
-                        <i className="ti ti-x" style={{ color: '#dc2626' }}></i>
-                      )}
-                      <h4 style={{ margin: 0, fontSize: '1.1rem' }}>{item.name}</h4>
-                      <span style={{ 
-                        fontSize: '0.8rem', 
-                        padding: '2px 8px', 
-                        borderRadius: '12px',
-                        background: item.accessible ? '#dcfce7' : '#fee2e2',
-                        color: item.accessible ? '#166534' : '#991b1b'
-                      }}>
-                        {item.data?.source || 'unknown'}
-                      </span>
-                    </div>
-                    <a href={item.url} target="_blank" rel="noopener noreferrer" style={{
-                      color: 'var(--primary)',
-                      textDecoration: 'none',
-                      wordBreak: 'break-all',
-                      display: 'inline-block',
-                      marginBottom: '10px'
-                    }}>
-                      <i className="ti ti-external-link"></i> {item.url}
-                    </a>
-                    {item.data && (
-                      <div className="url-data" style={{ fontSize: '0.9rem' }}>
-                        {/* Error display */}
-                        {(item.data.error || item.error) && (
-                          <div style={{
-                            background: '#fef2f2',
-                            border: '1px solid #fecaca',
-                            padding: '10px',
-                            borderRadius: '6px',
-                            marginBottom: '10px'
-                          }}>
-                            <p style={{ color: '#991b1b', margin: 0 }}>
-                              <i className="ti ti-alert-triangle"></i> Error: {item.data.error || item.error}
-                            </p>
-                          </div>
-                        )}
-
-                        {/* Display all data fields from backend */}
-                        <pre style={{
-                          background: '#f8fafc',
-                          padding: '10px',
-                          borderRadius: '6px',
-                          fontSize: '0.8rem',
-                          overflow: 'auto',
-                          maxHeight: '400px'
-                        }}>
-                          {JSON.stringify(item.data, null, 2)}
-                        </pre>
-                      </div>
-                    )}
-                  </div>
-                ))}
+                {processedUrls.map((item) => renderUrlDataCard(item))}
               </div>
             ) : (
               <div className="status-badge skipped"><i className="ti ti-circle-x"></i> No URLs processed</div>
@@ -1185,7 +2735,7 @@ function App() {
                 <p style={{ color: '#991b1b', marginBottom: '12px' }}>
                   <i className="ti ti-alert-triangle"></i> Pipeline failed: {pipelineState.error}
                 </p>
-                <button className="process-btn" onClick={handleRunPipeline}>
+                <button className="process-btn" onClick={() => handleRunPipeline()}>
                   <i className="ti ti-refresh" style={{ marginRight: '8px' }}></i>
                   Try Again
                 </button>
@@ -1243,465 +2793,19 @@ function App() {
                 </div>
 
                 {/* Agent 2 Results */}
-                {pipelineState.results.agent2 && (
-                  <div style={{ marginBottom: '24px' }}>
-                    <h4 style={{ marginBottom: '12px', color: '#1e293b' }}>
-                      <i className="ti ti-shield-check" style={{ marginRight: '8px' }}></i>
-                      Agent 2: Evidence Correlation & Verification
-                    </h4>
-                    <pre style={{
-                      background: '#f8fafc',
-                      padding: '16px',
-                      borderRadius: '8px',
-                      fontSize: '0.8rem',
-                      overflow: 'auto',
-                      maxHeight: '300px'
-                    }}>
-                      {JSON.stringify(pipelineState.results.agent2.data, null, 2)}
-                    </pre>
-                  </div>
-                )}
+                {pipelineState.results?.agent2 && renderAgent2Output(pipelineState.results.agent2.data)}
 
                 {/* Agent 3 Results */}
-                {pipelineState.results.agent3 && (
-                  <div style={{ marginBottom: '24px' }}>
-                    <h4 style={{ marginBottom: '12px', color: '#1e293b' }}>
-                      <i className="ti ti-bulb" style={{ marginRight: '8px' }}></i>
-                      Agent 3: Hidden Skill Discovery
-                    </h4>
-                    <pre style={{
-                      background: '#f8fafc',
-                      padding: '16px',
-                      borderRadius: '8px',
-                      fontSize: '0.8rem',
-                      overflow: 'auto',
-                      maxHeight: '300px'
-                    }}>
-                      {JSON.stringify(pipelineState.results.agent3.data, null, 2)}
-                    </pre>
-                  </div>
-                )}
+                {pipelineState.results?.agent3 && renderAgent3Output(pipelineState.results.agent3.data)}
 
                 {/* Agent 4 Results */}
-                {pipelineState.results?.agent4 && (
-                  <div style={{ marginBottom: '24px' }}>
-                    <h4 style={{ marginBottom: '12px', color: '#1e293b' }}>
-                      <i className="ti ti-target-arrow" style={{ marginRight: '8px' }}></i>
-                      Agent 4: Best Role Finder
-                    </h4>
-                    <pre style={{
-                      background: '#f8fafc',
-                      padding: '16px',
-                      borderRadius: '8px',
-                      fontSize: '0.8rem',
-                      overflow: 'auto',
-                      maxHeight: '300px'
-                    }}>
-                      {JSON.stringify(pipelineState.results.agent4.data, null, 2)}
-                    </pre>
-                  </div>
-                )}
+                {pipelineState.results?.agent4 && renderAgent4Output(pipelineState.results.agent4.data)}
 
                 {/* Agent 5 Results */}
-                {pipelineState.results?.agent5 && (
-                  <div style={{ marginBottom: '24px' }}>
-                    <h4 style={{ marginBottom: '12px', color: '#1e293b', fontSize: '1.3rem' }}>
-                      <i className="ti ti-shield-check" style={{ marginRight: '8px' }}></i>
-                      Agent 5: Project Authenticity System
-                    </h4>
-                    
-                    {/* Overall Authenticity Score */}
-                    <div style={{
-                      background: (pipelineState.results.agent5.data.overall_authenticity_score || 0) >= 80 
-                        ? '#f0fff4' 
-                        : (pipelineState.results.agent5.data.overall_authenticity_score || 0) >= 60 
-                        ? '#fffbeb' 
-                        : '#fff1f2',
-                      border: `1px solid ${(pipelineState.results.agent5.data.overall_authenticity_score || 0) >= 80 
-                        ? '#86efac' 
-                        : (pipelineState.results.agent5.data.overall_authenticity_score || 0) >= 60 
-                        ? '#fcd34d' 
-                        : '#fca5a5'}`,
-                      borderRadius: '12px',
-                      padding: '20px',
-                      marginBottom: '16px',
-                      textAlign: 'center'
-                    }}>
-                      <h3 style={{ margin: '0 0 8px 0' }}>
-                        Overall Authenticity: {pipelineState.results.agent5.data.overall_authenticity_score || 0}
-                      </h3>
-                      <div style={{ 
-                        fontSize: '1.1rem', 
-                        fontWeight: 600, 
-                        color: (pipelineState.results.agent5.data.verdict_level || '') === 'Highly Authentic' 
-                          ? '#16a34a' 
-                          : (pipelineState.results.agent5.data.verdict_level || '') === 'Mostly Authentic' 
-                          ? '#d97706' 
-                          : (pipelineState.results.agent5.data.verdict_level || '') === 'Partially Authentic' 
-                          ? '#dc2626' 
-                          : '#991b1b'
-                      }}>
-                        {pipelineState.results.agent5.data.verdict} ({pipelineState.results.agent5.data.verdict_level})
-                      </div>
-                      <p style={{ marginTop: '12px', marginBottom: '0' }}>
-                        {pipelineState.results.agent5.data.recruiter_summary}
-                      </p>
-                    </div>
-
-                    {/* Cross-Agent Conflicts (Most Prominent) */}
-                    {pipelineState.results.agent5.data.cross_agent_conflicts && pipelineState.results.agent5.data.cross_agent_conflicts.length > 0 && (
-                      <div style={{ marginBottom: '16px' }}>
-                        <h5 style={{ marginBottom: '12px', color: '#dc2626' }}>
-                          <i className="ti ti-alert-triangle" style={{ marginRight: '8px' }}></i>
-                          Cross-Agent Conflicts Detected ({pipelineState.results.agent5.data.cross_agent_conflicts.length})
-                        </h5>
-                        {pipelineState.results.agent5.data.cross_agent_conflicts.map((conflict, idx) => (
-                          <div key={idx} style={{
-                            background: '#fff1f2',
-                            border: '1px solid #fecaca',
-                            borderRadius: '8px',
-                            padding: '12px',
-                            marginBottom: '8px'
-                          }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                              <span style={{ fontWeight: 600 }}>{conflict.conflict_type}</span>
-                              <span style={{ 
-                                fontSize: '0.8rem', 
-                                padding: '2px 8px', 
-                                borderRadius: '999px',
-                                background: (conflict.severity || '') === 'critical' ? '#fee2e2' : (conflict.severity || '') === 'high' ? '#ffedd5' : (conflict.severity || '') === 'medium' ? '#fef3c7' : '#fef9c3',
-                                color: (conflict.severity || '') === 'critical' ? '#991b1b' : (conflict.severity || '') === 'high' ? '#c2410c' : (conflict.severity || '') === 'medium' ? '#92400e' : '#713f12'
-                              }}>
-                                {(conflict.severity || '').toUpperCase()}
-                              </span>
-                            </div>
-                            <div style={{ fontSize: '0.9rem', color: '#475569' }}>
-                              <strong>{conflict.agent_a}</strong> vs <strong>{conflict.agent_b}</strong>: {conflict.description}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Projects */}
-                    <div>
-                      <h5 style={{ marginBottom: '12px', color: '#1e293b' }}>
-                        <i className="ti ti-folder" style={{ marginRight: '8px' }}></i>
-                        Project Authenticity Details
-                      </h5>
-                      {(pipelineState.results.agent5.data.projects || []).map((project, idx) => (
-                        <div key={idx} style={{
-                          background: '#f8fafc',
-                          borderRadius: '8px',
-                          padding: '16px',
-                          marginBottom: '12px',
-                          border: `1px solid ${project.genuinely_built ? '#86efac' : '#fecaca'}`
-                        }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                            <h6 style={{ margin: 0, fontSize: '1.05rem' }}>
-                              {project.project_name}
-                            </h6>
-                            <div style={{ 
-                              fontSize: '0.9rem', 
-                              fontWeight: 600,
-                              color: (project.final_verdict || '').toLowerCase().includes('genuine') 
-                                ? '#16a34a' 
-                                : (project.final_verdict || '').toLowerCase().includes('partial') 
-                                ? '#d97706' 
-                                : '#dc2626'
-                            }}>
-                              {project.final_verdict} ({project.authenticity_score || 0}/100)
-                            </div>
-                          </div>
-                          
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
-                            <div>
-                              <span style={{ fontWeight: 500, color: '#64748b' }}>AI Assistance:</span>
-                              <span style={{ marginLeft: '8px', fontWeight: 600 }}>{project.ai_assistance_level}</span>
-                            </div>
-                            <div>
-                              <span style={{ fontWeight: 500, color: '#64748b' }}>Complexity Match:</span>
-                              <span style={{ marginLeft: '8px', fontWeight: 600 }}>{project.complexity_match}</span>
-                            </div>
-                          </div>
-
-                          {(project.green_flags || []).length > 0 && (
-                            <div style={{ marginBottom: '8px' }}>
-                              {(project.green_flags || []).map((flag, i) => (
-                                <span key={i} style={{
-                                  background: '#dcfce7',
-                                  color: '#166534',
-                                  padding: '3px 10px',
-                                  borderRadius: '999px',
-                                  fontSize: '0.8rem',
-                                  marginRight: '6px',
-                                  marginBottom: '6px',
-                                  display: 'inline-block'
-                                }}>
-                                  <i className="ti ti-check" style={{ marginRight: '4px' }}></i>
-                                  {flag}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-
-                          {(project.red_flags || []).length > 0 && (
-                            <div>
-                              {(project.red_flags || []).map((flag, i) => (
-                                <span key={i} style={{
-                                  background: '#fee2e2',
-                                  color: '#991b1b',
-                                  padding: '3px 10px',
-                                  borderRadius: '999px',
-                                  fontSize: '0.8rem',
-                                  marginRight: '6px',
-                                  marginBottom: '6px',
-                                  display: 'inline-block'
-                                }}>
-                                  <i className="ti ti-x" style={{ marginRight: '4px' }}></i>
-                                  {flag}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Full Report (Collapsible) */}
-                    <details style={{ marginTop: '16px' }}>
-                      <summary style={{ cursor: 'pointer', fontWeight: 600, color: '#64748b' }}>
-                        View Full Authenticity Report
-                      </summary>
-                      <pre style={{
-                        background: '#f8fafc',
-                        padding: '16px',
-                        borderRadius: '8px',
-                        fontSize: '0.8rem',
-                        overflow: 'auto',
-                        maxHeight: '300px',
-                        marginTop: '8px'
-                      }}>
-                        {JSON.stringify(pipelineState.results.agent5.data, null, 2)}
-                      </pre>
-                    </details>
-                  </div>
-                )}
+                {pipelineState.results?.agent5 && renderAgent5Output(pipelineState.results.agent5.data)}
 
                 {/* Agent 6 Results */}
-                {pipelineState.results?.agent6 && (
-                  <div style={{ marginBottom: '24px' }}>
-                    <h4 style={{ marginBottom: '12px', color: '#1e293b', fontSize: '1.3rem' }}>
-                      <i className="ti ti-code-circle" style={{ marginRight: '8px' }}></i>
-                      Agent 6: Technical Depth Assessment
-                    </h4>
-
-                    {/* Overall Technical Depth Score */}
-                    <div style={{
-                      background: (pipelineState.results.agent6.data.overall_technical_depth_score || 0) >= 80 
-                        ? '#f0fff4' 
-                        : (pipelineState.results.agent6.data.overall_technical_depth_score || 0) >= 60 
-                        ? '#fffbeb' 
-                        : '#fff1f2',
-                      border: `1px solid ${(pipelineState.results.agent6.data.overall_technical_depth_score || 0) >= 80 
-                        ? '#86efac' 
-                        : (pipelineState.results.agent6.data.overall_technical_depth_score || 0) >= 60 
-                        ? '#fcd34d' 
-                        : '#fca5a5'}`,
-                      borderRadius: '12px',
-                      padding: '20px',
-                      marginBottom: '16px',
-                      textAlign: 'center'
-                    }}>
-                      <h3 style={{ margin: '0 0 8px 0' }}>
-                        Overall Technical Depth: {pipelineState.results.agent6.data.overall_technical_depth_score || 0}
-                      </h3>
-                      <p style={{ marginTop: '12px', marginBottom: '0', fontSize: '1rem' }}>
-                        {pipelineState.results.agent6.data.recruiter_summary}
-                      </p>
-                    </div>
-
-                    {/* Strongest/Weakest Areas */}
-                    {((pipelineState.results.agent6.data.strongest_technical_areas || []).length > 0 || (pipelineState.results.agent6.data.weakest_technical_areas || []).length > 0) && (
-                      <div style={{ marginBottom: '16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                        {(pipelineState.results.agent6.data.strongest_technical_areas || []).length > 0 && (
-                          <div style={{ background: '#f0fff4', border: '1px solid #86efac', borderRadius: '8px', padding: '12px' }}>
-                            <h5 style={{ margin: '0 0 8px 0', color: '#16a34a' }}>
-                              <i className="ti ti-trending-up" style={{ marginRight: '6px' }}></i>
-                              Strongest Areas
-                            </h5>
-                            <ul style={{ margin: '0', paddingLeft: '18px' }}>
-                              {pipelineState.results.agent6.data.strongest_technical_areas.map((area, idx) => (
-                                <li key={idx}>{area}</li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
-                        {(pipelineState.results.agent6.data.weakest_technical_areas || []).length > 0 && (
-                          <div style={{ background: '#fff1f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '12px' }}>
-                            <h5 style={{ margin: '0 0 8px 0', color: '#dc2626' }}>
-                              <i className="ti ti-trending-down" style={{ marginRight: '6px' }}></i>
-                              Weakest Areas
-                            </h5>
-                            <ul style={{ margin: '0', paddingLeft: '18px' }}>
-                              {pipelineState.results.agent6.data.weakest_technical_areas.map((area, idx) => (
-                                <li key={idx}>{area}</li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Interview Recommendation */}
-                    {pipelineState.results.agent6.data.interview_recommendation && (
-                      <div style={{
-                        background: '#dbeafe',
-                        border: '1px solid #93c5fd',
-                        borderRadius: '8px',
-                        padding: '12px',
-                        marginBottom: '16px'
-                      }}>
-                        <h5 style={{ margin: '0 0 8px 0', color: '#1e40af' }}>
-                          <i className="ti ti-chalkboard" style={{ marginRight: '6px' }}></i>
-                          Interview Recommendation
-                        </h5>
-                        <p style={{ margin: '0 0 8px 0', fontWeight: 500 }}>
-                          {pipelineState.results.agent6.data.interview_recommendation.suggested_round_type}
-                        </p>
-                        {(pipelineState.results.agent6.data.interview_recommendation.topics_to_test || []).length > 0 && (
-                          <div style={{ marginBottom: '4px' }}>
-                            <strong>Topics to test:</strong> {pipelineState.results.agent6.data.interview_recommendation.topics_to_test.join(', ')}
-                          </div>
-                        )}
-                        {(pipelineState.results.agent6.data.interview_recommendation.topics_to_avoid_assuming || []).length > 0 && (
-                          <div>
-                            <strong>Topics to avoid assuming:</strong> {pipelineState.results.agent6.data.interview_recommendation.topics_to_avoid_assuming.join(', ')}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Skills Assessed */}
-                    {(pipelineState.results.agent6.data.skills_assessed || []).length > 0 && (
-                      <div style={{ marginBottom: '16px' }}>
-                        <h5 style={{ marginBottom: '12px', color: '#1e293b' }}>
-                          <i className="ti ti-star" style={{ marginRight: '8px' }}></i>
-                          Skills Assessed
-                        </h5>
-                        {(pipelineState.results.agent6.data.skills_assessed || []).map((skill, idx) => (
-                          <div key={idx} style={{
-                            background: '#f8fafc',
-                            borderRadius: '8px',
-                            padding: '12px',
-                            marginBottom: '8px',
-                            border: skill.level_gap_detected ? '1px solid #fecaca' : '1px solid #e2e8f0'
-                          }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                              <span style={{ fontWeight: 600, fontSize: '1rem' }}>{skill.skill}</span>
-                              <span style={{
-                                fontSize: '0.8rem',
-                                padding: '2px 8px',
-                                borderRadius: '999px',
-                                background: (skill.interview_readiness || '').includes('hard') ? '#fee2e2' 
-                                  : (skill.interview_readiness || '').includes('medium') ? '#fef3c7' 
-                                  : (skill.interview_readiness || '').includes('Fundamentals') ? '#e0f2fe' 
-                                  : '#f1f5f9',
-                                color: (skill.interview_readiness || '').includes('hard') ? '#991b1b' 
-                                  : (skill.interview_readiness || '').includes('medium') ? '#92400e' 
-                                  : (skill.interview_readiness || '').includes('Fundamentals') ? '#1e40af' 
-                                  : '#475569'
-                              }}>
-                                {skill.interview_readiness}
-                              </span>
-                            </div>
-                            <div style={{ fontSize: '0.9rem', marginBottom: '4px' }}>
-                              <span style={{ color: '#64748b' }}>Claimed:</span> {skill.claimed_level}
-                              <span style={{ marginLeft: '12px', color: '#64748b' }}>Evidenced:</span> {skill.evidenced_level}
-                            </div>
-                            {skill.level_gap_detected && (
-                              <div style={{
-                                fontSize: '0.85rem',
-                                color: '#dc2626',
-                                marginBottom: '4px'
-                              }}>
-                                ⚠️ Gap detected: {skill.gap_explanation}
-                              </div>
-                            )}
-                            <div style={{ fontSize: '0.85rem', color: '#64748b' }}>
-                              Recommended focus: {skill.recommended_interview_focus}
-                            </div>
-                            <details style={{ marginTop: '6px' }}>
-                              <summary style={{ fontSize: '0.85rem', cursor: 'pointer' }}>View Problem Solving Evidence</summary>
-                              <div style={{ marginTop: '6px', fontSize: '0.8rem', color: '#475569' }}>
-                                {skill.problem_solving_evidence.platform && (
-                                  <div>Platform: {skill.problem_solving_evidence.platform}</div>
-                                )}
-                                <div>
-                                  Easy: {skill.problem_solving_evidence.easy_solved || 0}
-                                  {' | '}
-                                  Medium: {skill.problem_solving_evidence.medium_solved || 0}
-                                  {' | '}
-                                  Hard: {skill.problem_solving_evidence.hard_solved || 0}
-                                </div>
-                                {skill.problem_solving_evidence.stars_or_rating && (
-                                  <div>Stars/Rating: {skill.problem_solving_evidence.stars_or_rating}</div>
-                                )}
-                                <div>Evidence Strength: {skill.problem_solving_evidence.evidence_strength || 'N/A'}</div>
-                              </div>
-                            </details>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Problem Solving Summary */}
-                    {pipelineState.results.agent6.data.problem_solving_summary && (
-                      <div style={{
-                        background: '#f8fafc',
-                        borderRadius: '8px',
-                        padding: '12px',
-                        marginBottom: '16px'
-                      }}>
-                        <h5 style={{ margin: '0 0 8px 0', color: '#1e293b' }}>
-                          <i className="ti ti-chart-histogram" style={{ marginRight: '6px' }}></i>
-                          Problem Solving Summary
-                        </h5>
-                        <div style={{ fontSize: '0.9rem' }}>
-                          Total Problems Solved: {pipelineState.results.agent6.data.problem_solving_summary.total_problems_solved || 0}
-                        </div>
-                        {pipelineState.results.agent6.data.problem_solving_summary.difficulty_distribution && (
-                          <div style={{ fontSize: '0.9rem' }}>
-                            Difficulty Distribution: {pipelineState.results.agent6.data.problem_solving_summary.difficulty_distribution}
-                          </div>
-                        )}
-                        {pipelineState.results.agent6.data.problem_solving_summary.consistency_rating && (
-                          <div style={{ fontSize: '0.9rem' }}>
-                            Consistency Rating: {pipelineState.results.agent6.data.problem_solving_summary.consistency_rating}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Full Report (Collapsible) */}
-                    <details style={{ marginTop: '8px' }}>
-                      <summary style={{ cursor: 'pointer', fontWeight: 600, color: '#64748b' }}>
-                        View Full Technical Depth Report
-                      </summary>
-                      <pre style={{
-                        background: '#f8fafc',
-                        padding: '16px',
-                        borderRadius: '8px',
-                        fontSize: '0.8rem',
-                        overflow: 'auto',
-                        maxHeight: '300px',
-                        marginTop: '8px'
-                      }}>
-                        {JSON.stringify(pipelineState.results.agent6.data, null, 2)}
-                      </pre>
-                    </details>
-                  </div>
-                )}
+                {pipelineState.results?.agent6 && renderAgent6Output(pipelineState.results.agent6.data)}
               </div>
             )}
           </div>

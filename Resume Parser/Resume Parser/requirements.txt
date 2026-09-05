@@ -5,4 +5,6 @@ requests
 beautifulsoup4
 lxml
 python-dotenv
-playwright
+supabase>=2.45.0
+# playwright  # ⚑ LOCAL DEV ONLY — disabled for free-tier PaaS (too large / needs system chromium).
+              # Enable locally with: pip install playwright && playwright install chromium

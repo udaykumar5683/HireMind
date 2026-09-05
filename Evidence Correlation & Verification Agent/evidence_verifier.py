@@ -15,6 +15,7 @@ This agent verifies candidate claims using evidence from available sources:
 
 import json
 import os
+from datetime import datetime
 from typing import Dict, List, Any, Optional
 from pathlib import Path
 
@@ -326,14 +327,21 @@ class EvidenceVerifier:
         return risk_flags
 
     def generate_full_report(self) -> Dict[str, Any]:
-        """Generate complete verification report"""
+        """Generate complete verification report with metadata & complete schema alignment"""
         skill_results = self.verify_skills()
         project_results = self.verify_projects()
         cert_results = self.verify_certifications()
         credibility_score = self.calculate_credibility_score(skill_results, project_results, cert_results)
         risk_flags = self.generate_risk_flags(skill_results, project_results)
         
+        tot_verified_skills = len(skill_results["verified_skills"])
+        tot_partially_skills = len(skill_results["partially_verified_skills"])
+        tot_unverified_skills = len(skill_results["unverified_skills"])
+        tot_claimed_skills = tot_verified_skills + tot_partially_skills + tot_unverified_skills
+
         return {
+            "candidate_name": self.profile.get("name", "Candidate"),
+            "timestamp": datetime.now().isoformat(),
             "verified_skills": skill_results["verified_skills"],
             "partially_verified_skills": skill_results["partially_verified_skills"],
             "unverified_skills": skill_results["unverified_skills"],
@@ -342,9 +350,13 @@ class EvidenceVerifier:
             "credibility_score": credibility_score,
             "risk_flags": risk_flags,
             "evidence_summary": {
-                "total_verified_skills": len(skill_results["verified_skills"]),
+                "total_claimed_skills": tot_claimed_skills,
+                "total_verified_skills": tot_verified_skills,
+                "total_partially_verified_skills": tot_partially_skills,
+                "total_unverified_skills": tot_unverified_skills,
                 "total_verified_projects": sum(1 for p in project_results if p["verification_status"] == "verified"),
-                "total_verified_certifications": len(cert_results)
+                "total_verified_certifications": len(cert_results),
+                "total_risk_flags": len(risk_flags)
             }
         }
 

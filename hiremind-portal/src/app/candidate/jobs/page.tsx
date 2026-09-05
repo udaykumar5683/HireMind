@@ -2,13 +2,14 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { Search, MapPin, DollarSign, Clock } from "lucide-react";
+import { Search, MapPin, DollarSign, Clock, ExternalLink } from "lucide-react";
 import Sidebar from "@/components/sidebar";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { createClient } from "@/supabase/client";
 import { type Job } from "@/types";
+import { launchExternalResumePortal } from "@/lib/portalLauncher";
 
 export default function CandidateJobs() {
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -127,9 +128,19 @@ export default function CandidateJobs() {
                     ))}
                   </div>
 
-                  <Link href={`/candidate/jobs/${job.id}`} className="block pt-2">
-                    <Button className="w-full">View Details</Button>
-                  </Link>
+                  <div className="flex gap-2 pt-2">
+                    <Link href={`/candidate/jobs/${job.id}`} className="flex-1">
+                      <Button variant="outline" className="w-full">
+                        View Details
+                      </Button>
+                    </Link>
+                    <Button
+                      className="flex-1 bg-[#6366F1] hover:bg-[#4F46E5] text-white"
+                      onClick={() => launchExternalResumePortal({ jobId: job.id })}
+                    >
+                      <ExternalLink className="w-4 h-4 mr-1" /> Apply (5173)
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             ))}

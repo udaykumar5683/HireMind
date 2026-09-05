@@ -1,0 +1,54 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: deploy/api.Dockerfile
+    env_file: .env
+    environment:
+      PORT: 5000
+      FLASK_DEBUG: "0"
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:3000}
+    ports:
+      - "5000:5000"
+    volumes:
+      - hiremind_data:/app/Database
+      - candidate_profiles:/app/Student_Profile_Database
+      - generated_profiles:/app/Profile_generator/Profile_Database
+    restart: unless-stopped
+
+  portal:
+    build:
+      context: .
+      dockerfile: deploy/portal.Dockerfile
+      args:
+        NEXT_PUBLIC_RESUME_PARSER_URL: ${NEXT_PUBLIC_RESUME_PARSER_URL:-http://localhost:5173}
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
+    environment:
+      PROFILE_DB_DIR: /data/student-profiles
+    ports:
+      - "3000:3000"
+    volumes:
+      - candidate_profiles:/data/student-profiles:ro
+    depends_on:
+      api:
+        condition: service_started
+    restart: unless-stopped
+
+  resume-ui:
+    build:
+      context: .
+      dockerfile: deploy/resume-ui.Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:5000}
+    ports:
+      - "5173:80"
+    depends_on:
+      api:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  hiremind_data:
+  candidate_profiles:
+  generated_profiles:

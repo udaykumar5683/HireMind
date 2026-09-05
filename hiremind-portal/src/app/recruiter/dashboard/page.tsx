@@ -47,9 +47,10 @@ export default function RecruiterDashboard() {
       if (userData.user) {
         const { data } = await supabase
           .from("applications")
-          .select("*, jobs(*)")
+          .select("*, jobs(*), profiles(*)")
+          .order("applied_at", { ascending: false })
           .limit(5);
-        if (data) setApplications(data);
+        if (data) setApplications(data as any);
       }
     };
 
@@ -279,7 +280,9 @@ export default function RecruiterDashboard() {
                               <Users className="w-6 h-6 text-blue-500" />
                             </div>
                             <div>
-                              <div className="font-semibold text-lg">Candidate</div>
+                              <div className="font-semibold text-lg truncate max-w-[180px] sm:max-w-[240px]">
+                                {(app as any).profiles?.full_name || (app as any).profiles?.email || "Candidate"}
+                              </div>
                               <div className="text-sm text-muted-foreground">
                                 {(app as any).jobs?.title}
                               </div>
@@ -296,10 +299,12 @@ export default function RecruiterDashboard() {
                             >
                               {app.status}
                             </span>
-                            <Button variant="default" size="sm" className="group">
-                              View
-                              <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-1 transition-transform" />
-                            </Button>
+                            <Link href="/recruiter/applications">
+                              <Button variant="default" size="sm" className="group">
+                                View
+                                <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-1 transition-transform" />
+                              </Button>
+                            </Link>
                           </div>
                         </motion.div>
                       ))}

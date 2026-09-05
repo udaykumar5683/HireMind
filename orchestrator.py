@@ -152,7 +152,7 @@ def run_project_authenticity(
 def run_pipeline(profile_file_path: str, groq_api_key: str = None, progress_callback: Optional[Callable] = None):
     """Run the complete HireMind pipeline"""
     if not groq_api_key:
-        groq_api_key = os.getenv("VITE_GROQ_API_KEY")
+        groq_api_key = os.getenv("GROQ_API_KEY") or os.getenv("VITE_GROQ_API_KEY")
 
     db_dir = BASE_DIR / "Database"
 
@@ -223,6 +223,7 @@ def run_pipeline(profile_file_path: str, groq_api_key: str = None, progress_call
         agent1_file,
         agent2_file,
         agent3_file,
+        agent4_file,
         agent5_file,
         agent6_output_dir,
         groq_api_key,

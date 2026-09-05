@@ -45,6 +45,10 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Temporary / scratch Markdown (do not commit)
+Pasted*
+Pasted markdown*.md
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
