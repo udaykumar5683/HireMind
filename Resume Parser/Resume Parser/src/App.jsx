@@ -17,22 +17,6 @@ function App() {
     results: null,
     error: null
   });
-  // State for incoming parameters from HireMind Portal
-  const [hiremindParams, setHiremindParams] = useState({
-    userId: null,
-    jobId: null,
-    returnUrl: null
-  });
-
-  // Read query parameters on mount
-  useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    setHiremindParams({
-      userId: urlParams.get('userId') || null,
-      jobId: urlParams.get('jobId') || null,
-      returnUrl: urlParams.get('returnUrl') || null
-    });
-  }, []);
   
   // Form input states
   const [name, setName] = useState("");
@@ -2692,7 +2676,7 @@ function App() {
 
           {/* Pipeline Section */}
           <div className="section">
-            <h3 className="section-header"><i className="ti ti-route"></i> HireMind Pipeline</h3>
+            <h3 className="section-header"><i className="ti ti-route"></i> AI Enrichment Pipeline</h3>
 
             {pipelineState.status === 'running' && (
               <div style={{ textAlign: 'center' }}>
@@ -2777,18 +2761,6 @@ function App() {
                         {pipelineState.student_profile_filepath}
                       </p>
                     </div>
-                  )}
-                  {hiremindParams.returnUrl && (
-                    <button 
-                      className="process-btn"
-                      onClick={() => window.location.href = hiremindParams.returnUrl}
-                      style={{ 
-                        background: '#6366F1' 
-                      }}
-                    >
-                      <i className="ti ti-arrow-left" style={{ marginRight: '8px' }}></i>
-                      Return to HireMind
-                    </button>
                   )}
                 </div>
 

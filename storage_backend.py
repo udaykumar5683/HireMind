@@ -1,5 +1,5 @@
 """
-Zero-dependency Supabase Storage backend for HireMind.
+Zero-dependency Supabase Storage backend for Resume Parser.
 Replaces local filesystem writes so the Flask API works on ephemeral PaaS (Koyeb).
 Falls back to local files if SUPABASE_URL/SUPABASE_KEY are not set (local dev).
 """
@@ -32,8 +32,8 @@ FOLDER_MAP = {
 
 def _supabase_client():
     """Lazy-load the Supabase client only if env vars exist."""
-    url = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL")
-    key = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY")
     if not url or not key:
         return None
     try:
@@ -135,7 +135,7 @@ def read_json(path_or_url: str) -> Optional[Any]:
 
 
 def list_files(bucket_key: str, suffix: str = ".json") -> list[str]:
-    """List filenames in a bucket/folder (used by portal list endpoints)."""
+    """List filenames in a bucket/folder (Supabase Storage or local fallback)."""
     folder = FOLDER_MAP.get(bucket_key, bucket_key)
     client = _supabase_client()
 

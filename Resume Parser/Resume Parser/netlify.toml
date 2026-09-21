@@ -1,0 +1,15 @@
+[build]
+  base = "Resume Parser/Resume Parser"
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  # VITE_API_URL should be set in the Netlify dashboard to the public Render backend URL:
+  #   VITE_API_URL = https://hiremind-api-xxx.onrender.com
+  # Note: Setting env vars declared here are used only if they exist; we recommend
+  # setting them in the dashboard to keep the repo public-safe.
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

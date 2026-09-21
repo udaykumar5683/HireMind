@@ -1,0 +1,41 @@
+services:
+  - type: web
+    name: hiremind-api
+    runtime: docker
+    repo: https://github.com/udaykumar5683/HireMind
+    branch: main
+    rootDir: ./
+    dockerfilePath: deploy/api.Dockerfile
+    dockerCommand: ""
+    region: oregon
+    plan: starter
+    healthCheckPath: /health
+    autoDeploy: "yes"
+    envVars:
+      - key: FLASK_DEBUG
+        value: "0"
+      - key: PORT
+        value: "10000"
+      - key: VITE_GROQ_API_KEY
+        sync: false
+        generateValue: false
+      - key: GROQ_API_KEY
+        sync: false
+        generateValue: false
+      - key: VITE_GITHUB_TOKEN
+        sync: false
+        generateValue: false
+      - key: GITHUB_TOKEN
+        sync: false
+        generateValue: false
+      - key: PROXYCURL_KEY
+        sync: false
+        generateValue: false
+      - key: SUPABASE_URL
+        sync: false
+        generateValue: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+        generateValue: false
+      - key: CORS_ORIGINS
+        value: "http://localhost:5173"

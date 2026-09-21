@@ -30,7 +30,7 @@ from storage_backend import save_json, read_json, list_files, STORAGE_BUCKET_NAM
 app = Flask(__name__)
 app.url_map.strict_slashes = False
 # Comma-separated browser origins. Set CORS_ORIGINS for the deployed URLs.
-CORS(app, origins=os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000").split(","), supports_credentials=True)
+CORS(app, origins=os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(","), supports_credentials=True)
 
 # Helper functions for env vars
 def get_groq_api_key():
@@ -167,39 +167,6 @@ def save_profile_endpoint():
                 json.dump(full_data, f, ensure_ascii=False, indent=2)
 
         return jsonify({"success": True, "filename": filename, "filepath": local_path, "remote": remote_path}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/student-profiles", methods=["GET"])
-def list_student_profiles():
-    """Portal-facing: list all generated student profiles sorted newest first."""
-    files = list_files("student")
-    return jsonify({"count": len(files), "files": files}), 200
-
-
-@app.route("/generated-profiles", methods=["GET"])
-def list_generated_profiles():
-    """Portal-facing: list all recruiter-facing generated profiles."""
-    files = list_files("generated")
-    lookup = request.args.get("lookup")
-    if lookup:
-        filtered = [f for f in files if (lookup in f) or (lookup in os.path.basename(f))]
-        return jsonify({"count": len(filtered), "files": filtered}), 200
-    return jsonify({"count": len(files), "files": files}), 200
-
-
-@app.route("/read-profile", methods=["GET"])
-def read_profile_endpoint():
-    """Portal-facing: fetch a single profile JSON by storage path, signed URL, or local path."""
-    path_or_url = request.args.get("path") or request.args.get("file") or request.args.get("url")
-    if not path_or_url:
-        return jsonify({"error": "Missing ?path= parameter"}), 400
-    try:
-        data = read_json(path_or_url)
-        if data is None:
-            return jsonify({"error": "Profile not found or unreadable"}), 404
-        return jsonify(data), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
