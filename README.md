@@ -1,6 +1,6 @@
 # 🧠 HireMind — AI Resume Intelligence Platform
 
-<img width="1254" height="1254" alt="HireMind" src="https://github.com/user-attachments/assets/31a40ba0-4a6b-422d-a694-b3b44f75e05a" />
+<img width="500" height="500" alt="HireMind" src="https://github.com/user-attachments/assets/31a40ba0-4a6b-422d-a694-b3b44f75e05a" />
 
 > **One Resume. Multiple Intelligence Layers. One Unified Insight.**
 
@@ -74,6 +74,8 @@ HireMind aims to perform:
 The important part is that **the Orchestrator does not blindly execute every tool**. It determines which analysis is relevant for the uploaded resume.
 
 ---
+<img width="1536" height="1024" alt="img" src="https://github.com/user-attachments/assets/6e63e260-2463-487a-90e8-370464035d5a" />
+
 
 # 🤖 AI Orchestrator — Main Agent
 
