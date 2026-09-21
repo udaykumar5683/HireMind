@@ -2,7 +2,7 @@ FROM python:3.12-slim-bookworm
 
 WORKDIR /app
 
-COPY Resume\ Parser/Resume\ Parser/requirements.txt /tmp/requirements.txt
+COPY ["Resume Parser/Resume Parser/requirements.txt", "/tmp/requirements.txt"]
 RUN pip install --no-cache-dir -r /tmp/requirements.txt gunicorn
 
 COPY . /app
