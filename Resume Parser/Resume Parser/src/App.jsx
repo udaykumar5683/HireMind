@@ -523,7 +523,7 @@ function App() {
           setSavedFilePath(saveData.filepath);
           
           // Automatically start the pipeline after saving
-          setTimeout(() => handleRunPipeline(saveData.filepath), 500);
+          setTimeout(() => handleRunPipeline(saveData.agent1_data || saveData.filepath), 500);
         } else {
           console.error('Failed to save profile');
         }
@@ -542,11 +542,20 @@ function App() {
     }
   };
 
-  const handleRunPipeline = async (filepathParam) => {
-    const targetPath = (typeof filepathParam === 'string' ? filepathParam : null) || savedFilePath;
-    if (!targetPath) {
-      alert('No saved profile to process');
-      return;
+  const handleRunPipeline = async (param) => {
+    let payload = {};
+    if (param && typeof param === 'object') {
+      payload = { agent1_data: param };
+    } else {
+      const targetPath = (typeof param === 'string' ? param : null) || savedFilePath;
+      if (enrichedProfile) {
+        payload = { profile: enrichedProfile, processed_urls: processedUrls || [] };
+      } else if (targetPath) {
+        payload = { filepath: targetPath };
+      } else {
+        alert('No saved profile to process');
+        return;
+      }
     }
 
     setPipelineState({
@@ -561,7 +570,7 @@ function App() {
       const runRes = await fetch(`${API_BASE_URL}/run-pipeline`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filepath: targetPath })
+        body: JSON.stringify(payload)
       });
 
       if (!runRes.ok) {

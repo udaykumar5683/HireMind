@@ -136,7 +136,7 @@ def extract_url_endpoint():
 
 @app.route("/save-profile", methods=["POST"])
 def save_profile_endpoint():
-    data = request.get_json()
+    data = request.get_json() or {}
     profile = data.get("profile")
     processed_urls = data.get("processed_urls")
 
@@ -159,14 +159,23 @@ def save_profile_endpoint():
         # Save via storage backend (Supabase Storage in prod, local in dev)
         remote_path = save_json("agent1", filename, full_data)
 
-        # Also save to local disk for the orchestrator pipeline (which reads Path objects)
-        os.makedirs(STORE_DIR, exist_ok=True)
+        # Also save to local disk for fallback access
         local_path = os.path.join(STORE_DIR, filename)
-        if not os.path.exists(local_path):
-            with open(local_path, "w", encoding="utf-8") as f:
-                json.dump(full_data, f, ensure_ascii=False, indent=2)
+        try:
+            os.makedirs(STORE_DIR, exist_ok=True)
+            if not os.path.exists(local_path):
+                with open(local_path, "w", encoding="utf-8") as f:
+                    json.dump(full_data, f, ensure_ascii=False, indent=2)
+        except Exception as disk_err:
+            print(f"[save-profile] Local disk save warning: {disk_err}")
 
-        return jsonify({"success": True, "filename": filename, "filepath": local_path, "remote": remote_path}), 200
+        return jsonify({
+            "success": True,
+            "filename": filename,
+            "filepath": local_path,
+            "remote": remote_path,
+            "agent1_data": full_data
+        }), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -178,14 +187,26 @@ def run_pipeline_endpoint():
     if pipeline_state["status"] == "running":
         return jsonify({"error": "Pipeline is already running"}), 400
 
-    data = request.get_json()
+    data = request.get_json() or {}
+    agent1_data = data.get("agent1_data")
     filepath = data.get("filepath")
 
-    if not filepath:
-        return jsonify({"error": "Filepath is required"}), 400
+    if not agent1_data and "profile" in data:
+        agent1_data = {
+            "timestamp": datetime.now().isoformat(),
+            "profile": data.get("profile"),
+            "processed_urls": data.get("processed_urls", [])
+        }
 
-    if not os.path.exists(filepath):
-        return jsonify({"error": "Profile file not found"}), 400
+    if not agent1_data and filepath:
+        if os.path.exists(filepath):
+            with open(filepath, "r", encoding="utf-8") as f:
+                agent1_data = json.load(f)
+        else:
+            return jsonify({"error": f"Profile file not found: {filepath}"}), 400
+
+    if not agent1_data or not isinstance(agent1_data, dict):
+        return jsonify({"error": "Either agent1_data JSON payload, profile object, or valid filepath is required"}), 400
 
     def pipeline_thread():
         global pipeline_state
@@ -199,11 +220,8 @@ def run_pipeline_endpoint():
                 "student_profile_filepath": None
             }
 
-            # Load original profile data
-            with open(filepath, "r", encoding="utf-8") as f:
-                original_data = json.load(f)
-            profile = original_data.get("profile", {})
-            processed_urls = original_data.get("processed_urls", [])
+            profile = agent1_data.get("profile", {})
+            processed_urls = agent1_data.get("processed_urls", [])
 
             # Define progress callback
             def update_progress(progress, step):
@@ -211,8 +229,8 @@ def run_pipeline_endpoint():
                 pipeline_state["progress"] = progress
                 pipeline_state["current_step"] = step
 
-            # Run full pipeline with progress updates
-            results = run_pipeline(filepath, get_groq_api_key(), progress_callback=update_progress)
+            # Run full pipeline with progress updates using in-memory agent1_data
+            results = run_pipeline(agent1_data, get_groq_api_key(), progress_callback=update_progress)
 
             # Combine all data into unified student profile
             unified_profile = {
@@ -228,10 +246,13 @@ def run_pipeline_endpoint():
             student_filename = f"{name_slug}_{timestamp}.json"
             student_filepath = os.path.join(STUDENT_DB_DIR, student_filename)
 
-            # Save unified profile to JSON
-            with open(student_filepath, "w", encoding="utf-8") as f:
-                json.dump(unified_profile, f, ensure_ascii=False, indent=2)
-            # Also persist to Supabase Storage for survival across PaaS restarts
+            # Save unified profile to JSON (post-pipeline persistence)
+            try:
+                with open(student_filepath, "w", encoding="utf-8") as f:
+                    json.dump(unified_profile, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                print(f"[pipeline] Local student file save warning: {e}")
+
             try:
                 save_json("student", student_filename, unified_profile)
             except Exception as storage_err:

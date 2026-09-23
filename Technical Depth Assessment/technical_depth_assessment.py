@@ -10,6 +10,7 @@ from datetime import datetime
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from typing import Any, Optional
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / ".env")
@@ -351,39 +352,44 @@ def sanitize_agent6_output(data: dict, candidate_name: str) -> dict:
 
 
 def run_technical_depth_assessment(
-    agent1_file: Path,
-    agent2_file: Path,
-    agent3_file: Path,
-    agent4_file: Path,
-    agent5_file: Path,
-    agent6_output_dir: Path,
+    agent1_input: Any,
+    agent2_input: Any,
+    agent3_input: Any,
+    agent4_input: Any,
+    agent5_input: Any,
     groq_api_key: str,
-    candidate_name: str
-) -> Path:
-    agent6_output_dir.mkdir(exist_ok=True, parents=True)
+    candidate_name: str,
+    agent6_output_dir: Optional[Path] = None
+) -> dict:
+    def load_if_path(inp):
+        if isinstance(inp, (str, Path)):
+            with open(inp, "r", encoding="utf-8") as f:
+                return json.load(f)
+        return inp
 
-    with open(agent1_file, "r", encoding="utf-8") as f:
-        agent1_data = json.load(f)
-    with open(agent2_file, "r", encoding="utf-8") as f:
-        agent2_data = json.load(f)
-    with open(agent3_file, "r", encoding="utf-8") as f:
-        agent3_data = json.load(f)
-    with open(agent4_file, "r", encoding="utf-8") as f:
-        agent4_data = json.load(f)
-    with open(agent5_file, "r", encoding="utf-8") as f:
-        agent5_data = json.load(f)
+    agent1_data = load_if_path(agent1_input)
+    agent2_data = load_if_path(agent2_input)
+    agent3_data = load_if_path(agent3_input)
+    agent4_data = load_if_path(agent4_input)
+    agent5_data = load_if_path(agent5_input)
 
     agent = TechnicalDepthAssessmentAgent(groq_api_key)
     report = agent.assess_technical_depth(
         agent1_data, agent2_data, agent3_data, agent4_data, agent5_data, candidate_name
     )
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_file = agent6_output_dir / f"technical_depth_report_{candidate_name}_{timestamp}.json"
-    with open(output_file, "w", encoding="utf-8") as f:
-        json.dump(report, f, indent=2, ensure_ascii=False)
+    if agent6_output_dir:
+        try:
+            agent6_output_dir = Path(agent6_output_dir)
+            agent6_output_dir.mkdir(exist_ok=True, parents=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_file = agent6_output_dir / f"technical_depth_report_{candidate_name}_{timestamp}.json"
+            with open(output_file, "w", encoding="utf-8") as f:
+                json.dump(report, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"[TechnicalDepthAgent] Optional output file save warning: {e}")
 
-    return output_file
+    return report
 
 
 if __name__ == "__main__":
@@ -405,15 +411,15 @@ if __name__ == "__main__":
         print("Error: Groq API key not provided")
         exit(1)
 
-    output_path = run_technical_depth_assessment(
+    report = run_technical_depth_assessment(
         Path(args.agent1),
         Path(args.agent2),
         Path(args.agent3),
         Path(args.agent4),
         Path(args.agent5),
-        Path(args.output_dir),
         api_key,
-        args.name
+        args.name,
+        Path(args.output_dir)
     )
 
-    print(f"Technical depth report saved to: {output_path}")
+    print(f"Technical depth report generated successfully.")
