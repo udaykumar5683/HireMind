@@ -1,9 +1,13 @@
 import { useState, useRef, useEffect } from 'react';
+import Navbar from './Navbar';
+import LandingPage from './LandingPage';
 import './App.css';
+import './LandingPage.css';
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:5000').replace(/\/$/, '');
 
 function App() {
+  const [currentView, setCurrentView] = useState('landing'); // 'landing' | 'parser'
   const [file, setFile] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
@@ -2159,17 +2163,38 @@ function App() {
   };
 
   return (
-    <div className="app">
-      <div className="agent-badge">Agent 1 · Resume Parser</div>
-      
-      {!enrichedProfile ? (
-        <div className="upload-section">
-          <div className="form-header">
-            <h1>Resume Parser</h1>
-            <p className="subtitle">Upload your resume and fill in your details to generate an enriched profile</p>
-          </div>
+    <div className="hiremind-app-wrapper">
+      <Navbar
+        currentView={currentView}
+        onNavigate={(view) => {
+          setCurrentView(view);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
+        onGetStarted={() => {
+          setCurrentView('parser');
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
+      />
 
-          <form onSubmit={(e) => { e.preventDefault(); handleProcess(); }} noValidate className="resume-form">
+      {currentView === 'landing' ? (
+        <LandingPage
+          onGetStarted={() => {
+            setCurrentView('parser');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }}
+        />
+      ) : (
+        <div className="app">
+          <div className="agent-badge">Agent 1 · Resume Parser</div>
+          
+          {!enrichedProfile ? (
+            <div className="upload-section">
+              <div className="form-header">
+                <h1>Resume Parser</h1>
+                <p className="subtitle">Upload your resume and fill in your details to generate an enriched profile</p>
+              </div>
+
+              <form onSubmit={(e) => { e.preventDefault(); handleProcess(); }} noValidate className="resume-form">
             {/* User Details Grid */}
             <div className="form-grid">
               <div className="form-group">
@@ -2795,6 +2820,8 @@ function App() {
         </div>
       )}
     </div>
+    )}
+  </div>
   );
 }
 
